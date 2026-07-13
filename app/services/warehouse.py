@@ -1973,6 +1973,17 @@ class WarehouseService:
                 raise ValidationError("Payment currency mismatch")
             if Decimal(str(payment["amount"])) != Decimal(str(amount)):
                 raise ValidationError("Payment amount mismatch")
+            previous_status = str(payment["status"] or "pending")
+            allowed_transitions = {
+                "pending": {"authorized", "paid", "failed", "cancelled"},
+                "authorized": {"paid", "failed", "cancelled"},
+                "paid": {"refunded"},
+                "failed": set(),
+                "cancelled": set(),
+                "refunded": set(),
+            }
+            if status != previous_status and status not in allowed_transitions.get(previous_status, set()):
+                raise ValidationError(f"Cannot move marketplace payment from {previous_status} to {status}")
             existing_provider_payment = conn.execute(
                 """SELECT id FROM marketplace_payments
                    WHERE provider = ? AND provider_payment_id = ? AND id <> ?""",
@@ -2017,7 +2028,6 @@ class WarehouseService:
                     "UPDATE marketplace_payments SET status = ?, updated_at = ? WHERE id = ?",
                     (status, now_iso(), payment_id),
                 )
-            previous_status = str(payment["status"] or "")
             if status == "paid" and previous_status != "paid":
                 self._mark_marketplace_order_paid(conn, int(payment["order_id"]), int(payment["id"]))
             elif status == "refunded" and previous_status != "refunded":
