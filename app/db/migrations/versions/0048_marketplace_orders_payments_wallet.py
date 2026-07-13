@@ -42,6 +42,24 @@ def upgrade() -> None:
             completed_at TIMESTAMPTZ
         )
     """)
+    op.execute("""
+        ALTER TABLE marketplace_orders
+            ADD COLUMN IF NOT EXISTS actor_id TEXT,
+            ADD COLUMN IF NOT EXISTS warehouse_id BIGINT REFERENCES warehouses(id),
+            ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'marqet',
+            ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'KZT',
+            ADD COLUMN IF NOT EXISTS subtotal_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS buyer_email TEXT,
+            ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS shipped_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS cancel_reason TEXT
+    """)
     op.execute("CREATE INDEX IF NOT EXISTS idx_marketplace_orders_actor ON marketplace_orders(actor_id, created_at DESC)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_marketplace_orders_supplier_status ON marketplace_orders(supplier_id, status, created_at DESC)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_marketplace_orders_status ON marketplace_orders(status, created_at DESC)")
@@ -60,6 +78,13 @@ def upgrade() -> None:
             line_total NUMERIC(18,2) NOT NULL CHECK (line_total >= 0),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+    """)
+    op.execute("""
+        ALTER TABLE marketplace_order_items
+            ADD COLUMN IF NOT EXISTS product_id BIGINT REFERENCES products(id) ON DELETE SET NULL,
+            ADD COLUMN IF NOT EXISTS sku TEXT,
+            ADD COLUMN IF NOT EXISTS line_total NUMERIC(18,2),
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     """)
     op.execute("CREATE INDEX IF NOT EXISTS idx_marketplace_order_items_order ON marketplace_order_items(order_id)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_marketplace_order_items_catalog ON marketplace_order_items(catalog_item_id)")
