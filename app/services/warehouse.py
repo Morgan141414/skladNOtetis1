@@ -1683,6 +1683,71 @@ class WarehouseService:
         finally:
             self._close_connection(connection)
 
+    def update_supplier_marketplace_order_status(
+        self,
+        supplier_id: int,
+        order_id: int,
+        *,
+        status: str,
+        cancel_reason: str | None = None,
+    ) -> dict[str, Any]:
+        status = status.strip().lower()
+        allowed = {
+            "pending": {"accepted", "cancelled"},
+            "pending_payment": {"accepted", "cancelled"},
+            "paid": {"accepted", "cancelled"},
+            "accepted": {"preparing", "cancelled"},
+            "preparing": {"shipped", "cancelled"},
+            "shipped": {"delivered"},
+            "delivered": {"completed"},
+            "completed": set(),
+            "cancelled": set(),
+            "refunded": set(),
+        }
+        if status not in {"accepted", "preparing", "shipped", "delivered", "completed", "cancelled"}:
+            raise ValidationError("Unsupported marketplace order status")
+        if status == "cancelled" and not (cancel_reason or "").strip():
+            raise ValidationError("cancel_reason is required when cancelling an order")
+        timestamp_columns = {
+            "accepted": "accepted_at",
+            "shipped": "shipped_at",
+            "delivered": "delivered_at",
+            "completed": "completed_at",
+            "cancelled": "cancelled_at",
+        }
+        with self.database.transaction() as conn:
+            order = conn.execute(
+                "SELECT * FROM marketplace_orders WHERE id = ? AND supplier_id = ?",
+                (order_id, supplier_id),
+            ).fetchone()
+            if order is None:
+                raise NotFoundError(f"marketplace order {order_id} not found")
+            current_status = str(order["status"] or "")
+            if status == current_status:
+                pass
+            else:
+                if status not in allowed.get(current_status, set()):
+                    raise ValidationError(f"Cannot move marketplace order from {current_status} to {status}")
+                now = now_iso()
+                assignments = ["status = ?", "updated_at = ?"]
+                params: list[Any] = [status, now]
+                timestamp_col = timestamp_columns.get(status)
+                if timestamp_col:
+                    assignments.append(f"{timestamp_col} = COALESCE({timestamp_col}, ?)")
+                    params.append(now)
+                if status == "preparing":
+                    assignments.append("accepted_at = COALESCE(accepted_at, ?)")
+                    params.append(now)
+                if status == "cancelled":
+                    assignments.append("cancel_reason = ?")
+                    params.append(cancel_reason.strip() if cancel_reason else None)
+                params.append(order_id)
+                conn.execute(
+                    f"UPDATE marketplace_orders SET {', '.join(assignments)} WHERE id = ?",
+                    tuple(params),
+                )
+        return self.get_supplier_marketplace_order(supplier_id, order_id)
+
     def bind_marketplace_payment_method(
         self,
         actor_id: str,

@@ -5648,6 +5648,11 @@ class MarketplacePaymentWebhook(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class SupplierMarketplaceOrderStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(accepted|preparing|shipped|delivered|completed|cancelled)$")
+    cancel_reason: str | None = Field(default=None, max_length=500)
+
+
 @router.get("/marketplace/cart", tags=["marketplace"])
 def get_cart_endpoint(actor_ctx: ActorContext = Depends(get_actor_context)) -> Any:
     try:
@@ -5940,6 +5945,25 @@ def get_supplier_marketplace_order_endpoint(
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
     try:
         return get_warehouse_service().get_supplier_marketplace_order(actor_ctx.supplier_id, order_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.patch("/supplier/marketplace-orders/{order_id}/status", tags=["supplier-self"])
+def update_supplier_marketplace_order_status_endpoint(
+    order_id: int,
+    body: SupplierMarketplaceOrderStatusUpdate,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    if actor_ctx.supplier_id is None:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
+    try:
+        return get_warehouse_service().update_supplier_marketplace_order_status(
+            actor_ctx.supplier_id,
+            order_id,
+            status=body.status,
+            cancel_reason=body.cancel_reason,
+        )
     except Exception as error:
         raise map_error(error) from error
 
