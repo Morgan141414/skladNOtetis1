@@ -1,17 +1,33 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { apiGetOrder, type MarketplaceOrderDetail } from '../../api'
+import { apiCreateMarketplacePayment, apiGetOrder, type MarketplaceOrderDetail, type MarketplacePayment } from '../../api'
 import { AccountIcon, AccountShell, EmptyState, MockDataNotice, OrderStatusBadge } from './accountUi'
+import { useToast } from '../../components/Toast'
 
 const fmtMoney = (value: number | null) => value == null ? 'По запросу' : `${value.toLocaleString('ru-KZ')} ₸`
 const fmtDateTime = (value: string) => new Intl.DateTimeFormat('ru-KZ', { day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 
+const paymentLabels: Record<MarketplacePayment['status'], string> = {
+  pending: 'Ожидает подтверждения',
+  requires_action: 'Требуется действие',
+  authorized: 'Авторизован',
+  paid: 'Оплачен',
+  failed: 'Не прошел',
+  cancelled: 'Отменен',
+  refunded: 'Возвращен',
+}
+
+const canRetryPayment = (order: MarketplaceOrderDetail) =>
+  order.status === 'pending_payment' && (!order.latest_payment || ['pending', 'failed', 'cancelled'].includes(order.latest_payment.status))
+
 export default function OrderDetailPage() {
   const params = useParams()
   const orderId = Number(params.id)
+  const { show } = useToast()
   const [order, setOrder] = useState<MarketplaceOrderDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [paying, setPaying] = useState(false)
 
   useEffect(() => {
     if (!Number.isFinite(orderId)) {
@@ -24,6 +40,23 @@ export default function OrderDetailPage() {
       .catch(e => setError(e instanceof Error ? e.message : 'Не удалось загрузить заказ'))
       .finally(() => setLoading(false))
   }, [orderId])
+
+  async function retryPayment() {
+    if (!order || paying) return
+    setPaying(true)
+    try {
+      const payment = await apiCreateMarketplacePayment(order.id, { provider: 'manual_card' })
+      setOrder({ ...order, latest_payment: payment, payment_status: payment.status })
+      show('Платежная попытка создана')
+      if (payment.payment_url) {
+        window.location.assign(payment.payment_url)
+      }
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Не удалось создать платеж', 'error')
+    } finally {
+      setPaying(false)
+    }
+  }
 
   return (
     <AccountShell
@@ -63,6 +96,30 @@ export default function OrderDetailPage() {
                 </div>
               ))}
             </div>
+          </section>
+
+          <section className="acct-section">
+            <h2>Оплата</h2>
+            <div className="acct-payment-status">
+              <div>
+                <strong>{order.latest_payment ? paymentLabels[order.latest_payment.status] : 'Платеж еще не создан'}</strong>
+                <span>
+                  {order.latest_payment
+                    ? `${order.latest_payment.provider} · ${fmtMoney(order.latest_payment.amount)}`
+                    : 'Создайте платежную попытку, чтобы продолжить оплату после подключения провайдера.'}
+                </span>
+              </div>
+              {order.latest_payment?.payment_url ? (
+                <a className="acct-primary" href={order.latest_payment.payment_url}>Перейти к оплате</a>
+              ) : (
+                <button className="acct-primary" type="button" onClick={retryPayment} disabled={!canRetryPayment(order) || paying}>
+                  {paying ? 'Создаем...' : 'Повторить оплату'}
+                </button>
+              )}
+            </div>
+            <p style={{ marginTop: 12 }}>
+              marqet.kz не хранит номер карты и CVV. Статус оплаты меняется только после защищенного подтверждения платежного провайдера.
+            </p>
           </section>
 
           <section className="acct-section">

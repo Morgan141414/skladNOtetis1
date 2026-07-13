@@ -356,7 +356,7 @@ export interface MarketplaceOrderListItem extends MockableResponse {
   supplier_name?: string | null
   product_name?: string | null
   source_inquiry_id?: number | null
-  payment_status?: 'unpaid' | 'pending' | 'paid' | 'refunded'
+  payment_status?: 'unpaid' | MarketplacePayment['status']
   delivery_status?: 'not_started' | 'preparing' | 'in_transit' | 'delivered'
 }
 
@@ -384,6 +384,7 @@ export interface MarketplaceOrderDetail extends MarketplaceOrderListItem {
   delivery_address?: string | null
   notes?: string | null
   items: MarketplaceOrderItem[]
+  latest_payment?: MarketplacePayment | null
   timeline: MarketplaceOrderTimelineEvent[]
 }
 
@@ -430,9 +431,10 @@ export interface MarketplacePayment {
   id: number
   order_id: number
   provider: string
-  status: 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded'
+  status: 'pending' | 'requires_action' | 'authorized' | 'paid' | 'failed' | 'cancelled' | 'refunded'
   amount: number | null
   currency: 'KZT'
+  payment_url?: string | null
   created_at: string
   paid_at?: string | null
 }

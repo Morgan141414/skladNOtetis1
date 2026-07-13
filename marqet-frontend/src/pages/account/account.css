@@ -49,6 +49,9 @@
 .acct-payment-mark { height:46px; border-radius:12px; background:#1E1B4B; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:900; letter-spacing:.4px; }
 .acct-payment-card strong { display:block; color:#1E1B4B; margin-bottom:4px; }
 .acct-payment-card span { color:#64748B; font-size:13px; }
+.acct-payment-status { border:1px solid #E2E8F0; border-radius:14px; padding:14px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:center; background:#F8FAFC; }
+.acct-payment-status strong { display:block; color:#1E1B4B; margin-bottom:4px; }
+.acct-payment-status span { display:block; color:#64748B; font-size:13px; line-height:1.45; }
 .acct-detail-top { display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start; }
 .acct-items { display:grid; gap:10px; }
 .acct-item { display:grid; grid-template-columns:48px minmax(0,1fr) auto; gap:12px; align-items:center; border-bottom:1px solid #EEF2F7; padding:12px 0; }
@@ -82,6 +85,6 @@
   .acct-head-actions { margin-top:14px; }
   .acct-nav { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .acct-grid { grid-template-columns:1fr; }
-  .acct-order-row, .acct-detail-top, .acct-payment-card { grid-template-columns:1fr; }
+  .acct-order-row, .acct-detail-top, .acct-payment-card, .acct-payment-status { grid-template-columns:1fr; }
   .acct-order-row { align-items:start; }
 }
