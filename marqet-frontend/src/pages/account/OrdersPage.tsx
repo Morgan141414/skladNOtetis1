@@ -6,6 +6,18 @@ import { AccountShell, EmptyState, MockDataNotice, OrderStatusBadge } from './ac
 const fmtMoney = (value: number | null) => value == null ? 'По запросу' : `${value.toLocaleString('ru-KZ')} ₸`
 const fmtDate = (value: string) => new Intl.DateTimeFormat('ru-KZ', { day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(value))
 
+function financeBadge(order: AccountOrdersResponse['items'][number]) {
+  if (order.status === 'completed') return { label: 'Выплачено продавцу', tone: 'success' }
+  if (order.status === 'refund_requested') return { label: 'Запрошен возврат', tone: 'info' }
+  if (order.status === 'refunded') return { label: 'Возврат оформлен', tone: 'danger' }
+  if (['paid', 'accepted', 'preparing', 'shipped', 'delivered'].includes(order.status)) {
+    return { label: 'Деньги в холде', tone: 'hold' }
+  }
+  if (order.payment_status === 'failed') return { label: 'Оплата не прошла', tone: 'danger' }
+  if (order.status === 'cancelled') return { label: 'Отменен', tone: 'danger' }
+  return { label: 'Ожидает оплаты', tone: 'info' }
+}
+
 export default function OrdersPage() {
   const [data, setData] = useState<AccountOrdersResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -31,17 +43,23 @@ export default function OrdersPage() {
         />
       )}
       <div className="acct-row-list">
-        {data?.items.map(order => (
-          <Link className="acct-order-row" to={`/account/orders/${order.id}`} key={order.id}>
-            <div>
-              <strong>{order.number}</strong>
-              <span>{order.product_name ?? `${order.items_count} товар(ов)`}</span>
-              <div className="acct-order-meta">{order.supplier_name ?? 'Поставщик'} · {fmtDate(order.created_at)}</div>
-            </div>
-            <OrderStatusBadge status={order.status} />
-            <div className="acct-money">{fmtMoney(order.total_amount)}</div>
-          </Link>
-        ))}
+        {data?.items.map(order => {
+          const badge = financeBadge(order)
+          return (
+            <Link className="acct-order-row" to={`/account/orders/${order.id}`} key={order.id}>
+              <div>
+                <strong>{order.number}</strong>
+                <span>{order.product_name ?? `${order.items_count} товар(ов)`}</span>
+                <div className="acct-order-meta">{order.supplier_name ?? 'Поставщик'} · {fmtDate(order.created_at)}</div>
+              </div>
+              <div className="acct-order-badges">
+                <OrderStatusBadge status={order.status} />
+                <span className={`acct-finance-badge acct-finance-${badge.tone}`}>{badge.label}</span>
+              </div>
+              <div className="acct-money">{fmtMoney(order.total_amount)}</div>
+            </Link>
+          )
+        })}
       </div>
     </AccountShell>
   )

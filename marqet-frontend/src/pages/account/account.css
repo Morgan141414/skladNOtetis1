@@ -36,6 +36,12 @@
 .acct-badge-info { background:#EEF2FF; color:#4338CA; }
 .acct-badge-success { background:#DCFCE7; color:#166534; }
 .acct-badge-danger { background:#FEE2E2; color:#991B1B; }
+.acct-order-badges { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.acct-finance-badge { display:inline-flex; align-items:center; min-height:28px; padding:5px 10px; border-radius:999px; font-size:12px; font-weight:900; white-space:nowrap; }
+.acct-finance-info { background:#F1F5F9; color:#475569; }
+.acct-finance-hold { background:#FEF3C7; color:#92400E; }
+.acct-finance-success { background:#DCFCE7; color:#166534; }
+.acct-finance-danger { background:#FEE2E2; color:#991B1B; }
 .acct-actions { display:flex; gap:10px; flex-wrap:wrap; }
 .acct-primary, .acct-secondary { min-height:44px; border-radius:12px; padding:0 16px; font-weight:900; font-size:14px; border:none; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
 .acct-primary { background:var(--brand-grad); color:#fff; }
@@ -91,4 +97,5 @@
   .acct-grid { grid-template-columns:1fr; }
   .acct-order-row, .acct-detail-top, .acct-payment-card, .acct-payment-status { grid-template-columns:1fr; }
   .acct-order-row { align-items:start; }
+  .acct-order-badges { justify-content:flex-start; }
 }

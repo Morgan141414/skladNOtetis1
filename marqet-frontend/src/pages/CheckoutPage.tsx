@@ -79,7 +79,7 @@ const deliveryOptions = [
 ]
 
 const paymentOptions = [
-  { id: 'card', title: 'Банковская карта', copy: 'Создадим платежную попытку. Списание включается через защищенный webhook банка.' },
+  { id: 'card', title: 'Банковская карта', copy: 'Создадим платежную попытку. После оплаты деньги останутся в холде до завершения заказа.' },
   { id: 'invoice', title: 'Счет продавца', copy: 'Заказ сохранится в системе, а оплату подтвердит продавец или менеджер.' },
 ]
 
@@ -189,7 +189,7 @@ export default function CheckoutPage() {
         ) : createdCheckout.length > 0 ? (
           <div className="checkout-success">
             <h2>Заказы созданы</h2>
-            <p>Создано заказов: {createdCheckout.length}. Платежи ожидают подтверждения платежного провайдера или менеджера.</p>
+            <p>Создано заказов: {createdCheckout.length}. После подтверждения оплаты деньги будут защищены холдом marqet.kz до завершения заказа.</p>
             <div className="checkout-created">
               {createdCheckout.map(({ order, payment }) => (
                 <div className="checkout-created-item" key={order.id}>
@@ -287,7 +287,7 @@ export default function CheckoutPage() {
               <div className="summary-total"><span>Итого</span><span>{totalKnown ? fmt(cart.total_amount) : 'По запросу'}</span></div>
               {error && <div className="checkout-error" style={{ marginTop: 14 }}>{error}</div>}
               <div className="checkout-note" style={{ marginTop: 14 }}>
-                Мы не храним номер карты и CVV. Деньги будут списаны и зачислены продавцу только после подтверждения от платежного провайдера.
+                Мы не храним номер карты и CVV. После подтверждения оплаты деньги остаются в холде marqet.kz и становятся доступны продавцу только после завершения заказа.
               </div>
               <button className="checkout-submit" type="submit" disabled={submitting}>
                 {submitting ? 'Создаем заказ...' : 'Создать заказ и платеж'}
