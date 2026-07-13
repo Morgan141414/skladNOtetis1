@@ -25,6 +25,9 @@ def upgrade() -> None:
         DECLARE
             constraint_name text;
         BEGIN
+            ALTER TABLE marketplace_orders
+                DROP CONSTRAINT IF EXISTS marketplace_orders_status_check;
+
             SELECT con.conname
               INTO constraint_name
               FROM pg_constraint con
@@ -34,7 +37,6 @@ def upgrade() -> None:
                AND nsp.nspname = current_schema()
                AND con.contype = 'c'
                AND pg_get_constraintdef(con.oid) LIKE '%status%'
-               AND pg_get_constraintdef(con.oid) LIKE '%pending_payment%'
              LIMIT 1;
 
             IF constraint_name IS NOT NULL THEN
