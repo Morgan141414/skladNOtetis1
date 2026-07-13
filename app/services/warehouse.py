@@ -1694,7 +1694,7 @@ class WarehouseService:
         status = status.strip().lower()
         allowed = {
             "pending": {"accepted", "cancelled"},
-            "pending_payment": {"accepted", "cancelled"},
+            "pending_payment": {"cancelled"},
             "paid": {"accepted", "cancelled"},
             "accepted": {"preparing", "cancelled"},
             "preparing": {"shipped", "cancelled"},
@@ -9018,7 +9018,9 @@ class WarehouseService:
             raise NotFoundError(f"marketplace order {order_id} not found")
         now = now_iso()
         connection.execute(
-            "UPDATE marketplace_orders SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ? AND status <> 'paid'",
+            """UPDATE marketplace_orders
+               SET status = 'paid', paid_at = ?, updated_at = ?
+               WHERE id = ? AND status IN ('draft', 'pending_payment')""",
             (now, now, order_id),
         )
         supplier_id = int(order["supplier_id"])
