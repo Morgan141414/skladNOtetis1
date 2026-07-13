@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { apiCreateMarketplacePayment, apiGetOrder, type MarketplaceOrderDetail, type MarketplacePayment } from '../../api'
+import {
+  apiCancelMarketplaceOrder,
+  apiCreateMarketplacePayment,
+  apiGetOrder,
+  apiRequestMarketplaceRefund,
+  type MarketplaceOrderDetail,
+  type MarketplacePayment,
+} from '../../api'
 import { AccountIcon, AccountShell, EmptyState, MockDataNotice, OrderStatusBadge } from './accountUi'
 import { useToast } from '../../components/Toast'
 
@@ -20,6 +27,22 @@ const paymentLabels: Record<MarketplacePayment['status'], string> = {
 const canRetryPayment = (order: MarketplaceOrderDetail) =>
   order.status === 'pending_payment' && (!order.latest_payment || ['pending', 'failed', 'cancelled'].includes(order.latest_payment.status))
 
+const canCancelOrder = (order: MarketplaceOrderDetail) =>
+  ['draft', 'pending_payment'].includes(order.status)
+
+const canRequestRefund = (order: MarketplaceOrderDetail) =>
+  ['paid', 'accepted', 'preparing', 'shipped', 'delivered', 'completed'].includes(order.status)
+
+const escrowText = (order: MarketplaceOrderDetail) => {
+  if (order.status === 'completed') return 'Деньги переданы продавцу после завершения заказа.'
+  if (['paid', 'accepted', 'preparing', 'shipped', 'delivered'].includes(order.status)) {
+    return 'Деньги зарезервированы marqet.kz и будут доступны продавцу после завершения заказа.'
+  }
+  if (order.status === 'refund_requested') return 'Запрос на возврат принят. Возврат будет проведен через платежного провайдера.'
+  if (order.status === 'refunded') return 'Возврат по заказу оформлен.'
+  return 'Покупка защищена: продавец получает деньги только после завершения заказа.'
+}
+
 export default function OrderDetailPage() {
   const params = useParams()
   const orderId = Number(params.id)
@@ -28,6 +51,9 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [paying, setPaying] = useState(false)
+  const [orderAction, setOrderAction] = useState<'cancel' | 'refund' | ''>('')
+  const [reason, setReason] = useState('')
+  const [actionSaving, setActionSaving] = useState(false)
 
   useEffect(() => {
     if (!Number.isFinite(orderId)) {
@@ -55,6 +81,29 @@ export default function OrderDetailPage() {
       show(e instanceof Error ? e.message : 'Не удалось создать платеж', 'error')
     } finally {
       setPaying(false)
+    }
+  }
+
+  async function submitOrderAction(action: 'cancel' | 'refund') {
+    if (!order || actionSaving) return
+    const trimmed = reason.trim()
+    if (trimmed.length < 3) {
+      show('Укажите причину минимум из 3 символов', 'error')
+      return
+    }
+    setActionSaving(true)
+    try {
+      const updated = action === 'cancel'
+        ? await apiCancelMarketplaceOrder(order.id, trimmed)
+        : await apiRequestMarketplaceRefund(order.id, trimmed)
+      setOrder(updated)
+      setOrderAction('')
+      setReason('')
+      show(action === 'cancel' ? 'Заказ отменен' : 'Запрос на возврат отправлен')
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Не удалось выполнить действие', 'error')
+    } finally {
+      setActionSaving(false)
     }
   }
 
@@ -118,9 +167,59 @@ export default function OrderDetailPage() {
               )}
             </div>
             <p style={{ marginTop: 12 }}>
-              marqet.kz не хранит номер карты и CVV. Статус оплаты меняется только после защищенного подтверждения платежного провайдера.
+              {escrowText(order)}
             </p>
           </section>
+
+          {(canCancelOrder(order) || canRequestRefund(order) || order.status === 'refund_requested') && (
+            <section className="acct-section">
+              <h2>Действия с заказом</h2>
+              {order.status === 'refund_requested' ? (
+                <p>Запрос на возврат уже отправлен. Мы обновим статус после обработки платежным провайдером.</p>
+              ) : (
+                <>
+                  <div className="acct-actions">
+                    {canCancelOrder(order) && (
+                      <button className="acct-secondary" type="button" onClick={() => setOrderAction('cancel')}>
+                        Отменить заказ
+                      </button>
+                    )}
+                    {canRequestRefund(order) && (
+                      <button className="acct-secondary" type="button" onClick={() => setOrderAction('refund')}>
+                        Запросить возврат
+                      </button>
+                    )}
+                  </div>
+                  {orderAction && (
+                    <div className="acct-reason-box">
+                      <label>
+                        Причина
+                        <textarea
+                          value={reason}
+                          onChange={event => setReason(event.target.value)}
+                          rows={3}
+                          placeholder={orderAction === 'cancel' ? 'Например, изменились планы' : 'Опишите, почему нужен возврат'}
+                        />
+                      </label>
+                      <div className="acct-actions">
+                        <button
+                          className="acct-primary"
+                          type="button"
+                          onClick={() => submitOrderAction(orderAction)}
+                          disabled={actionSaving}
+                        >
+                          {actionSaving ? 'Отправляем...' : orderAction === 'cancel' ? 'Подтвердить отмену' : 'Отправить запрос'}
+                        </button>
+                        <button className="acct-secondary" type="button" onClick={() => setOrderAction('')} disabled={actionSaving}>
+                          Не сейчас
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          )}
 
           <section className="acct-section">
             <h2>Доставка и контакт</h2>

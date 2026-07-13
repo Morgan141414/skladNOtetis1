@@ -1919,6 +1919,91 @@ class WarehouseService:
             )
         return self.get_marketplace_payment(actor_id, payment_id)
 
+    def cancel_marketplace_order(
+        self,
+        actor_id: str,
+        order_id: int,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        reason = reason.strip()
+        if len(reason) < 3:
+            raise ValidationError("Cancellation reason is required")
+        with self.database.transaction() as conn:
+            order = conn.execute(
+                "SELECT * FROM marketplace_orders WHERE id = ? AND actor_id = ?",
+                (order_id, actor_id),
+            ).fetchone()
+            if order is None:
+                raise NotFoundError(f"marketplace order {order_id} not found")
+            current_status = str(order["status"] or "")
+            if current_status in {"cancelled", "refunded", "completed"}:
+                raise ValidationError(f"Cannot cancel marketplace order in status {current_status}")
+            paid_payment = conn.execute(
+                """SELECT id FROM marketplace_payments
+                   WHERE order_id = ? AND status IN ('authorized','paid')
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 1""",
+                (order_id,),
+            ).fetchone()
+            if paid_payment is not None:
+                raise ValidationError("Paid marketplace orders require a refund request")
+            now = now_iso()
+            conn.execute(
+                """UPDATE marketplace_orders
+                   SET status = 'cancelled', cancel_reason = ?, cancelled_at = COALESCE(cancelled_at, ?), updated_at = ?
+                   WHERE id = ?""",
+                (reason, now, now, order_id),
+            )
+            conn.execute(
+                """UPDATE marketplace_payments
+                   SET status = 'cancelled', updated_at = ?
+                   WHERE order_id = ? AND status IN ('pending','requires_action')""",
+                (now, order_id),
+            )
+            self._cancel_marketplace_order_hold(conn, order_id, cancel_reason=reason)
+        return self.get_marketplace_order(actor_id, order_id)
+
+    def request_marketplace_order_refund(
+        self,
+        actor_id: str,
+        order_id: int,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        reason = reason.strip()
+        if len(reason) < 3:
+            raise ValidationError("Refund reason is required")
+        with self.database.transaction() as conn:
+            order = conn.execute(
+                "SELECT * FROM marketplace_orders WHERE id = ? AND actor_id = ?",
+                (order_id, actor_id),
+            ).fetchone()
+            if order is None:
+                raise NotFoundError(f"marketplace order {order_id} not found")
+            current_status = str(order["status"] or "")
+            if current_status in {"cancelled", "refunded"}:
+                raise ValidationError(f"Cannot request refund for marketplace order in status {current_status}")
+            if current_status == "refund_requested":
+                return self.get_marketplace_order(actor_id, order_id)
+            paid_payment = conn.execute(
+                """SELECT id FROM marketplace_payments
+                   WHERE order_id = ? AND status IN ('authorized','paid')
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 1""",
+                (order_id,),
+            ).fetchone()
+            if paid_payment is None:
+                raise ValidationError("Only authorized or paid marketplace orders can request a refund")
+            now = now_iso()
+            conn.execute(
+                """UPDATE marketplace_orders
+                   SET status = 'refund_requested', cancel_reason = ?, updated_at = ?
+                   WHERE id = ?""",
+                (reason, now, order_id),
+            )
+        return self.get_marketplace_order(actor_id, order_id)
+
     def get_marketplace_payment(self, actor_id: str, payment_id: int) -> dict[str, Any]:
         connection = self.database.connect()
         try:

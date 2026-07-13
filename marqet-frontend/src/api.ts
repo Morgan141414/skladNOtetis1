@@ -327,6 +327,7 @@ export type MarketplaceOrderStatus =
   | 'delivered'
   | 'completed'
   | 'cancelled'
+  | 'refund_requested'
   | 'refunded'
 
 export interface MockableResponse {
@@ -539,6 +540,24 @@ export const apiCreateMarketplacePayment = (
       provider: body.provider ?? 'manual',
       payment_method_id: body.payment_method_id ?? null,
     }),
+  })
+
+export const apiCancelMarketplaceOrder = (
+  orderId: number,
+  reason: string,
+): Promise<MarketplaceOrderDetail> =>
+  accountReq<MarketplaceOrderDetail>(`/marketplace/orders/${orderId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+
+export const apiRequestMarketplaceRefund = (
+  orderId: number,
+  reason: string,
+): Promise<MarketplaceOrderDetail> =>
+  accountReq<MarketplaceOrderDetail>(`/marketplace/orders/${orderId}/refund-request`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   })
 
 export const apiBindPaymentMethod = (body: {

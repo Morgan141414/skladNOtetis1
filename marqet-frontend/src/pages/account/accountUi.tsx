@@ -107,6 +107,7 @@ export function OrderStatusBadge({ status }: { status: MarketplaceOrderStatus })
     delivered: 'Доставлен',
     completed: 'Завершен',
     cancelled: 'Отменен',
+    refund_requested: 'Запрошен возврат',
     refunded: 'Возврат',
   }
   const tone = ['cancelled', 'refunded'].includes(status) ? 'danger' : ['delivered', 'completed', 'paid'].includes(status) ? 'success' : 'info'

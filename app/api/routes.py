@@ -5648,6 +5648,10 @@ class MarketplacePaymentWebhook(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class MarketplaceOrderCancelRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class SupplierMarketplaceOrderStatusUpdate(BaseModel):
     status: str = Field(pattern="^(accepted|preparing|shipped|delivered|completed|cancelled)$")
     cancel_reason: str | None = Field(default=None, max_length=500)
@@ -5812,6 +5816,38 @@ def create_marketplace_payment_endpoint(
             ),
         )
         return payment
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/orders/{order_id}/cancel", tags=["marketplace"])
+def cancel_marketplace_order_endpoint(
+    order_id: int,
+    body: MarketplaceOrderCancelRequest,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().cancel_marketplace_order(
+            actor_ctx.actor_id,
+            order_id,
+            reason=body.reason,
+        )
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/orders/{order_id}/refund-request", tags=["marketplace"])
+def request_marketplace_order_refund_endpoint(
+    order_id: int,
+    body: MarketplaceOrderCancelRequest,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().request_marketplace_order_refund(
+            actor_ctx.actor_id,
+            order_id,
+            reason=body.reason,
+        )
     except Exception as error:
         raise map_error(error) from error
 

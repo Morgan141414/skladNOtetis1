@@ -52,6 +52,10 @@
 .acct-payment-status { border:1px solid #E2E8F0; border-radius:14px; padding:14px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:center; background:#F8FAFC; }
 .acct-payment-status strong { display:block; color:#1E1B4B; margin-bottom:4px; }
 .acct-payment-status span { display:block; color:#64748B; font-size:13px; line-height:1.45; }
+.acct-reason-box { margin-top:14px; display:grid; gap:12px; }
+.acct-reason-box label { display:grid; gap:8px; color:#1E1B4B; font-size:14px; font-weight:900; }
+.acct-reason-box textarea { width:100%; min-height:88px; border:1.5px solid #E2E8F0; border-radius:12px; padding:12px; color:#1E1B4B; font:inherit; line-height:1.45; resize:vertical; }
+.acct-reason-box textarea:focus { outline:none; border-color:#818CF8; box-shadow:0 0 0 3px rgba(99,102,241,.12); }
 .acct-detail-top { display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start; }
 .acct-items { display:grid; gap:10px; }
 .acct-item { display:grid; grid-template-columns:48px minmax(0,1fr) auto; gap:12px; align-items:center; border-bottom:1px solid #EEF2F7; padding:12px 0; }
