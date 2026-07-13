@@ -22,6 +22,8 @@ import OrdersPage from './pages/account/OrdersPage'
 import OrderDetailPage from './pages/account/OrderDetailPage'
 import PaymentMethodsPage from './pages/account/PaymentMethodsPage'
 import LoyaltyPage from './pages/account/LoyaltyPage'
+import SellerOrdersPage from './pages/seller/SellerOrdersPage'
+import SellerWalletPage from './pages/seller/SellerWalletPage'
 
 const css = `
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -80,6 +82,8 @@ export default function App() {
           <Route path="/account/orders/:id" element={<OrderDetailPage />} />
           <Route path="/account/payment-methods" element={<PaymentMethodsPage />} />
           <Route path="/account/loyalty" element={<LoyaltyPage />} />
+          <Route path="/seller/orders" element={<SellerOrdersPage />} />
+          <Route path="/seller/wallet" element={<SellerWalletPage />} />
           <Route path="/cart" element={<CartPage />} />
           <Route path="/checkout" element={<CheckoutPage />} />
           <Route path="/favorites" element={<FavoritesPage />} />

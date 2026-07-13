@@ -135,6 +135,8 @@ export default function Header({ onSearch }: { onSearch?: (q: string) => void })
                     <Link to="/account/orders" onClick={() => setDd(false)}>Заказы</Link>
                     <Link to="/account/payment-methods" onClick={() => setDd(false)}>Способы оплаты</Link>
                     <Link to="/account/loyalty" onClick={() => setDd(false)}>Бонусы</Link>
+                    <Link to="/seller/orders" onClick={() => setDd(false)}>Заказы продавца</Link>
+                    <Link to="/seller/wallet" onClick={() => setDd(false)}>Кошелек продавца</Link>
                     <Link to="/account" onClick={() => setDd(false)}>Мои объявления</Link>
                     <Link to="/favorites" onClick={() => setDd(false)}>Избранное</Link>
                     <Link to="/cart" onClick={() => setDd(false)}>Корзина{cartCount > 0 ? ` (${cartCount})` : ''}</Link>

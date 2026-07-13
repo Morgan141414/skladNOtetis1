@@ -319,6 +319,7 @@ export const apiGetAdminStats = (): Promise<AdminStats> =>
 
 export type MarketplaceOrderStatus =
   | 'draft'
+  | 'pending'
   | 'pending_payment'
   | 'paid'
   | 'accepted'
@@ -440,6 +441,54 @@ export interface MarketplacePayment {
   paid_at?: string | null
 }
 
+export type SupplierMarketplaceOrderNextStatus =
+  | 'accepted'
+  | 'preparing'
+  | 'shipped'
+  | 'delivered'
+  | 'completed'
+  | 'cancelled'
+
+export interface SupplierMarketplaceOrdersResponse extends MockableResponse {
+  items: MarketplaceOrderListItem[]
+  total: number
+}
+
+export interface SupplierMarketplaceWallet extends MockableResponse {
+  supplier_id: number
+  currency: 'KZT'
+  available_amount: number
+  pending_amount: number
+  posted_credit: number
+  posted_debit: number
+  pending_ledger: number
+  ledger_entries: number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface SupplierMarketplaceLedgerEntry {
+  id: number
+  order_id?: number | null
+  order_number?: string | null
+  payment_id?: number | null
+  provider?: string | null
+  provider_payment_id?: string | null
+  entry_type: 'credit' | 'debit' | 'hold' | 'release' | 'refund' | 'adjust'
+  status: 'pending' | 'posted' | 'cancelled'
+  amount: number
+  currency: 'KZT'
+  description?: string | null
+  source_type?: string | null
+  source_id?: string | null
+  created_at: string
+}
+
+export interface SupplierMarketplaceLedgerResponse extends MockableResponse {
+  items: SupplierMarketplaceLedgerEntry[]
+  total: number
+}
+
 class AccountApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -559,6 +608,38 @@ export const apiRequestMarketplaceRefund = (
     method: 'POST',
     body: JSON.stringify({ reason }),
   })
+
+export const apiGetSupplierMarketplaceOrders = (params: { status?: string; limit?: number; offset?: number } = {}): Promise<SupplierMarketplaceOrdersResponse> => {
+  const q = new URLSearchParams()
+  if (params.status) q.set('status', params.status)
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.offset != null) q.set('offset', String(params.offset))
+  const suffix = q.toString() ? `?${q}` : ''
+  return accountReq<SupplierMarketplaceOrdersResponse>(`/supplier/marketplace-orders${suffix}`)
+}
+
+export const apiGetSupplierMarketplaceOrder = (id: number): Promise<MarketplaceOrderDetail> =>
+  accountReq<MarketplaceOrderDetail>(`/supplier/marketplace-orders/${id}`)
+
+export const apiUpdateSupplierMarketplaceOrderStatus = (
+  orderId: number,
+  body: { status: SupplierMarketplaceOrderNextStatus; cancel_reason?: string | null },
+): Promise<MarketplaceOrderDetail> =>
+  accountReq<MarketplaceOrderDetail>(`/supplier/marketplace-orders/${orderId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+
+export const apiGetSupplierMarketplaceWallet = (): Promise<SupplierMarketplaceWallet> =>
+  accountReq<SupplierMarketplaceWallet>('/supplier/marketplace-wallet')
+
+export const apiGetSupplierMarketplaceLedger = (params: { limit?: number; offset?: number } = {}): Promise<SupplierMarketplaceLedgerResponse> => {
+  const q = new URLSearchParams()
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.offset != null) q.set('offset', String(params.offset))
+  const suffix = q.toString() ? `?${q}` : ''
+  return accountReq<SupplierMarketplaceLedgerResponse>(`/supplier/marketplace-wallet/ledger${suffix}`)
+}
 
 export const apiBindPaymentMethod = (body: {
   provider: string

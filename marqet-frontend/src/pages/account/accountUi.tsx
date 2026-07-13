@@ -99,6 +99,7 @@ export function AccountStatCard({ label, value, icon, hint, to }: { label: strin
 export function OrderStatusBadge({ status }: { status: MarketplaceOrderStatus }) {
   const labels: Record<MarketplaceOrderStatus, string> = {
     draft: 'Черновик',
+    pending: 'Ожидает',
     pending_payment: 'Ожидает оплаты',
     paid: 'Оплачен',
     accepted: 'Принят',
