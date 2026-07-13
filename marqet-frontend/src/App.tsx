@@ -17,6 +17,11 @@ import MessagesPage from './pages/MessagesPage'
 import CartPage from './components/CartPage'
 import FavoritesPage from './pages/FavoritesPage'
 import CheckoutPage from './pages/CheckoutPage'
+import AccountHubPage from './pages/account/AccountHubPage'
+import OrdersPage from './pages/account/OrdersPage'
+import OrderDetailPage from './pages/account/OrderDetailPage'
+import PaymentMethodsPage from './pages/account/PaymentMethodsPage'
+import LoyaltyPage from './pages/account/LoyaltyPage'
 
 const css = `
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -70,6 +75,11 @@ export default function App() {
           <Route path="/seller/:id" element={<SellerPage />} />
           <Route path="/post" element={<PostListingPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/account/hub" element={<AccountHubPage />} />
+          <Route path="/account/orders" element={<OrdersPage />} />
+          <Route path="/account/orders/:id" element={<OrderDetailPage />} />
+          <Route path="/account/payment-methods" element={<PaymentMethodsPage />} />
+          <Route path="/account/loyalty" element={<LoyaltyPage />} />
           <Route path="/cart" element={<CartPage />} />
           <Route path="/checkout" element={<CheckoutPage />} />
           <Route path="/favorites" element={<FavoritesPage />} />
@@ -86,7 +96,7 @@ export default function App() {
             <a href="/post">Подать объявление</a>
             <a href="/favorites">Избранное</a>
             <a href="/cart">Корзина</a>
-            <a href="/account">Личный кабинет</a>
+            <a href="/account/hub">Личный кабинет</a>
           </div>
           <div style={{marginTop:12,opacity:.4,fontSize:11}}>© 2026 marqet.kz — Маркетплейс Казахстана</div>
         </footer>

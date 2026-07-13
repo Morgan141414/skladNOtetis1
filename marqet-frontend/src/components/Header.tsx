@@ -131,12 +131,15 @@ export default function Header({ onSearch }: { onSearch?: (q: string) => void })
                 </button>
                 {dd && (
                   <div className="dd">
+                    <Link to="/account/hub" onClick={() => setDd(false)}>Профиль</Link>
+                    <Link to="/account/orders" onClick={() => setDd(false)}>Заказы</Link>
+                    <Link to="/account/payment-methods" onClick={() => setDd(false)}>Способы оплаты</Link>
+                    <Link to="/account/loyalty" onClick={() => setDd(false)}>Бонусы</Link>
                     <Link to="/account" onClick={() => setDd(false)}>Мои объявления</Link>
                     <Link to="/favorites" onClick={() => setDd(false)}>Избранное</Link>
                     <Link to="/cart" onClick={() => setDd(false)}>Корзина{cartCount > 0 ? ` (${cartCount})` : ''}</Link>
                     <Link to="/messages" onClick={() => setDd(false)}>Сообщения</Link>
                     {!user.is_nca_verified && <button onClick={() => { openNCA(); setDd(false) }}>Подтвердить ИИН (ЭЦП)</button>}
-                    <Link to="/account" onClick={() => setDd(false)}>Профиль</Link>
                     <button className="danger" onClick={() => { logout(); setDd(false) }}>Выйти</button>
                   </div>
                 )}

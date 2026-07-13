@@ -1,4 +1,11 @@
 import type { Product } from './components/ProductCard'
+import {
+  mockAccountSummary,
+  mockLoyaltyAccount,
+  mockOrderDetail,
+  mockOrders,
+  mockPaymentMethods,
+} from './pages/account/accountMocks'
 
 const BASE = '/api/v1'
 
@@ -307,3 +314,201 @@ export interface AdminStats {
 
 export const apiGetAdminStats = (): Promise<AdminStats> =>
   authReq<AdminStats>('/marketplace/admin/stats')
+
+// ── Buyer account hub / orders / payments / loyalty ────────────────────────
+
+export type MarketplaceOrderStatus =
+  | 'draft'
+  | 'pending_payment'
+  | 'paid'
+  | 'accepted'
+  | 'preparing'
+  | 'shipped'
+  | 'delivered'
+  | 'completed'
+  | 'cancelled'
+  | 'refunded'
+
+export interface MockableResponse {
+  is_mock?: boolean
+  unavailable?: boolean
+}
+
+export interface AccountSummary extends MockableResponse {
+  active_orders: number
+  delivered_orders: number
+  bonus_points: number
+  saved_payment_methods: number
+  open_messages: number
+  seller_listings: number
+}
+
+export interface MarketplaceOrderListItem extends MockableResponse {
+  id: number
+  number: string
+  status: MarketplaceOrderStatus
+  created_at: string
+  updated_at?: string | null
+  total_amount: number | null
+  currency: 'KZT'
+  items_count: number
+  supplier_id?: number | null
+  supplier_name?: string | null
+  product_name?: string | null
+  source_inquiry_id?: number | null
+  payment_status?: 'unpaid' | 'pending' | 'paid' | 'refunded'
+  delivery_status?: 'not_started' | 'preparing' | 'in_transit' | 'delivered'
+}
+
+export interface MarketplaceOrderItem {
+  id: number
+  catalog_item_id?: number | null
+  product_name: string
+  quantity: number
+  unit?: string | null
+  unit_price: number | null
+  image_url?: string | null
+}
+
+export interface MarketplaceOrderTimelineEvent {
+  id: string
+  title: string
+  description?: string | null
+  created_at: string
+  status?: MarketplaceOrderStatus
+}
+
+export interface MarketplaceOrderDetail extends MarketplaceOrderListItem {
+  buyer_name?: string | null
+  buyer_phone?: string | null
+  delivery_address?: string | null
+  notes?: string | null
+  items: MarketplaceOrderItem[]
+  timeline: MarketplaceOrderTimelineEvent[]
+}
+
+export interface PaymentMethod extends MockableResponse {
+  id: string
+  brand: 'visa' | 'mastercard' | 'kaspi' | 'halyk' | 'unknown'
+  last4: string
+  expiry_month?: number | null
+  expiry_year?: number | null
+  holder_name?: string | null
+  is_default: boolean
+  status: 'active' | 'expired' | 'disabled'
+}
+
+export interface LoyaltyEvent {
+  id: string
+  type: 'earn' | 'redeem' | 'adjust' | 'reversal' | 'expire'
+  title: string
+  points_delta: number
+  created_at: string
+  order_number?: string | null
+}
+
+export interface LoyaltyAccount extends MockableResponse {
+  tier: 'bronze' | 'silver' | 'gold' | 'platinum'
+  points_balance: number
+  points_pending: number
+  next_tier_points: number
+  lifetime_spend: number
+  currency: 'KZT'
+  history: LoyaltyEvent[]
+}
+
+export interface AccountOrdersResponse extends MockableResponse {
+  items: MarketplaceOrderListItem[]
+  total: number
+}
+
+export interface PaymentMethodsResponse extends MockableResponse {
+  items: PaymentMethod[]
+}
+
+class AccountApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
+async function accountReq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const tok = getToken2()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> ?? {}) }
+  if (tok) headers['Authorization'] = `Bearer ${tok}`
+  const res = await fetch(`/api/v1${path}`, { ...opts, headers })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new AccountApiError(res.status, err?.detail?.message ?? err?.detail ?? `HTTP ${res.status}`)
+  }
+  if (res.status === 204) return undefined as T
+  return res.json()
+}
+
+const accountEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env ?? {}
+const USE_ACCOUNT_MOCKS =
+  accountEnv.VITE_MARQET_ACCOUNT_MOCKS === '1' ||
+  accountEnv.DEV === true
+
+function markMock<T extends MockableResponse>(value: T, unavailable = false): T {
+  return { ...value, is_mock: true, unavailable }
+}
+
+async function withAccountFallback<T extends MockableResponse>(
+  real: () => Promise<T>,
+  mock: T,
+): Promise<T> {
+  if (USE_ACCOUNT_MOCKS) return markMock(mock)
+  try {
+    return await real()
+  } catch (error) {
+    if (error instanceof AccountApiError && (error.status === 404 || error.status === 501)) {
+      return markMock(mock, true)
+    }
+    throw error
+  }
+}
+
+export const apiGetAccountSummary = (): Promise<AccountSummary> =>
+  withAccountFallback(
+    () => accountReq<AccountSummary>('/marketplace/account/summary'),
+    mockAccountSummary,
+  )
+
+export const apiGetMyOrders = (params: { status?: string; limit?: number; offset?: number } = {}): Promise<AccountOrdersResponse> => {
+  const q = new URLSearchParams()
+  if (params.status) q.set('status', params.status)
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.offset != null) q.set('offset', String(params.offset))
+  const suffix = q.toString() ? `?${q}` : ''
+  return withAccountFallback(
+    () => accountReq<AccountOrdersResponse>(`/marketplace/orders${suffix}`),
+    mockOrders,
+  )
+}
+
+export const apiGetOrder = (id: number): Promise<MarketplaceOrderDetail> =>
+  withAccountFallback(
+    () => accountReq<MarketplaceOrderDetail>(`/marketplace/orders/${id}`),
+    mockOrderDetail(id),
+  )
+
+export const apiGetPaymentMethods = (): Promise<PaymentMethodsResponse> =>
+  withAccountFallback(
+    () => accountReq<PaymentMethodsResponse>('/marketplace/payment-methods'),
+    mockPaymentMethods,
+  )
+
+export const apiSetDefaultPaymentMethod = (id: string): Promise<PaymentMethod> =>
+  accountReq<PaymentMethod>(`/marketplace/payment-methods/${id}/default`, { method: 'PATCH' })
+
+export const apiDeletePaymentMethod = (id: string): Promise<void> =>
+  accountReq<void>(`/marketplace/payment-methods/${id}`, { method: 'DELETE' })
+
+export const apiGetLoyaltyAccount = (): Promise<LoyaltyAccount> =>
+  withAccountFallback(
+    () => accountReq<LoyaltyAccount>('/marketplace/loyalty'),
+    mockLoyaltyAccount,
+  )
