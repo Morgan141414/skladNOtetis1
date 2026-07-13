@@ -1584,6 +1584,105 @@ class WarehouseService:
         order = self._get_marketplace_order_for_supplier(supplier_id, order_id)
         return self._marketplace_order_detail(order)
 
+    def get_supplier_marketplace_wallet(self, supplier_id: int) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            account = connection.execute(
+                """SELECT supplier_id, currency, available_amount, pending_amount, created_at, updated_at
+                   FROM marketplace_seller_accounts
+                   WHERE supplier_id = ?""",
+                (supplier_id,),
+            ).fetchone()
+            totals = connection.execute(
+                """SELECT
+                       COALESCE(SUM(CASE WHEN entry_type = 'credit' AND status = 'posted' THEN amount ELSE 0 END), 0) AS posted_credit,
+                       COALESCE(SUM(CASE WHEN entry_type IN ('debit','refund') AND status = 'posted' THEN amount ELSE 0 END), 0) AS posted_debit,
+                       COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) AS pending_ledger,
+                       COUNT(*) AS ledger_entries
+                   FROM marketplace_seller_ledger
+                   WHERE supplier_id = ?""",
+                (supplier_id,),
+            ).fetchone()
+            if account is None:
+                return {
+                    "supplier_id": supplier_id,
+                    "currency": "KZT",
+                    "available_amount": 0.0,
+                    "pending_amount": 0.0,
+                    "posted_credit": float(totals["posted_credit"] or 0),
+                    "posted_debit": float(totals["posted_debit"] or 0),
+                    "pending_ledger": float(totals["pending_ledger"] or 0),
+                    "ledger_entries": int(totals["ledger_entries"] or 0),
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            return {
+                "supplier_id": int(account["supplier_id"]),
+                "currency": account["currency"] or "KZT",
+                "available_amount": float(account["available_amount"] or 0),
+                "pending_amount": float(account["pending_amount"] or 0),
+                "posted_credit": float(totals["posted_credit"] or 0),
+                "posted_debit": float(totals["posted_debit"] or 0),
+                "pending_ledger": float(totals["pending_ledger"] or 0),
+                "ledger_entries": int(totals["ledger_entries"] or 0),
+                "created_at": account["created_at"],
+                "updated_at": account["updated_at"],
+            }
+        finally:
+            self._close_connection(connection)
+
+    def list_supplier_marketplace_ledger(
+        self,
+        supplier_id: int,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        connection = self.database.connect()
+        try:
+            total = connection.execute(
+                "SELECT COUNT(*) AS total FROM marketplace_seller_ledger WHERE supplier_id = ?",
+                (supplier_id,),
+            ).fetchone()["total"]
+            rows = connection.execute(
+                """SELECT l.id, l.order_id, l.payment_id, l.entry_type, l.status, l.amount,
+                          l.currency, l.description, l.source_type, l.source_id, l.created_at,
+                          mo.order_number, mp.provider, mp.provider_payment_id
+                   FROM marketplace_seller_ledger l
+                   LEFT JOIN marketplace_orders mo ON mo.id = l.order_id
+                   LEFT JOIN marketplace_payments mp ON mp.id = l.payment_id
+                   WHERE l.supplier_id = ?
+                   ORDER BY l.created_at DESC, l.id DESC
+                   LIMIT ? OFFSET ?""",
+                (supplier_id, safe_limit, safe_offset),
+            ).fetchall()
+            return {
+                "items": [
+                    {
+                        "id": row["id"],
+                        "order_id": row["order_id"],
+                        "order_number": row["order_number"],
+                        "payment_id": row["payment_id"],
+                        "provider": row["provider"],
+                        "provider_payment_id": row["provider_payment_id"],
+                        "entry_type": row["entry_type"],
+                        "status": row["status"],
+                        "amount": float(row["amount"] or 0),
+                        "currency": row["currency"] or "KZT",
+                        "description": row["description"],
+                        "source_type": row["source_type"],
+                        "source_id": row["source_id"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ],
+                "total": int(total),
+            }
+        finally:
+            self._close_connection(connection)
+
     def bind_marketplace_payment_method(
         self,
         actor_id: str,

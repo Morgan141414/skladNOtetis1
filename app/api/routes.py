@@ -5944,6 +5944,35 @@ def get_supplier_marketplace_order_endpoint(
         raise map_error(error) from error
 
 
+@router.get("/supplier/marketplace-wallet", tags=["supplier-self"])
+def get_supplier_marketplace_wallet_endpoint(
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    if actor_ctx.supplier_id is None:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
+    try:
+        return get_warehouse_service().get_supplier_marketplace_wallet(actor_ctx.supplier_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/supplier/marketplace-wallet/ledger", tags=["supplier-self"])
+def list_supplier_marketplace_ledger_endpoint(
+    limit: int = 50,
+    offset: int = 0,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    if actor_ctx.supplier_id is None:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
+    try:
+        safe_limit, safe_offset = pagination_meta(limit, offset)
+        return get_warehouse_service().list_supplier_marketplace_ledger(
+            actor_ctx.supplier_id, limit=safe_limit, offset=safe_offset
+        )
+    except Exception as error:
+        raise map_error(error) from error
+
+
 # ── Bulk inquiry ─────────────────────────────────────────────────────────────
 
 class BulkInquiryCreate(BaseModel):
