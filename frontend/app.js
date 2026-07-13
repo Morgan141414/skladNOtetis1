@@ -2745,9 +2745,12 @@ async function deleteCatalogEntry(kind, id, button) {
     return;
   }
   const label = kind === "category" ? "категорию" : "товар";
+  const isDeletion = kind === "product";
   const ok = await confirmAction(
-    `Скрыть ${label} «${row.name}»? Новые операции больше не будут предлагать эту запись, но история документов сохранится.`,
-    { title: "Скрыть запись", confirmText: "Скрыть", tone: "danger" },
+    isDeletion
+      ? `Удалить товар «${row.name}» из справочника? Он исчезнет из форм прихода и списания. История партий и документов сохранится.`
+      : `Скрыть ${label} «${row.name}»? Новые операции больше не будут предлагать эту запись, но история документов сохранится.`,
+    { title: isDeletion ? "Удалить товар" : "Скрыть запись", confirmText: isDeletion ? "Удалить" : "Скрыть", tone: "danger" },
   );
   if (!ok) return;
   try {
@@ -3685,7 +3688,7 @@ function renderCatalog() {
         { label: "", render: (row) => `<button class="secondary compact-action" type="button" data-print-product-label="${escapeAttr(row.id)}">${row.label_needs_reprint ? "🔴 Перепечатать" : "Этикетка"}</button>` },
         { label: "", render: (row) => `<button class="secondary compact-action" type="button" data-show-barcode="${escapeAttr(row.id)}">Штрихкод</button>` },
         { label: "", render: (row) => `<button class="secondary compact-action" type="button" data-edit-catalog="product" data-edit-id="${escapeAttr(row.id)}">Исправить</button>` },
-        { label: "", render: (row) => `<button class="danger compact-action" type="button" data-delete-catalog="product" data-delete-id="${escapeAttr(row.id)}">Скрыть</button>` },
+        { label: "", render: (row) => `<button class="danger compact-action" type="button" data-delete-catalog="product" data-delete-id="${escapeAttr(row.id)}" title="Удалить товар из справочника">Удалить</button>` },
       ], filteredRows((state.ui?.reprintFilterOn ? state.data.products.filter(p => p.label_needs_reprint) : state.data.products), (row) => [row.id, row.name, row.sku, row.unit, row.barcode, row.certificate_ref, row.description, rawNameById("categories", row.category_id)]), "Товаров пока нет. Создайте категорию и новый товар в форме слева.")}
       </div>
       <div class="table-panel span-5"><h2>${t("Справочник")}</h2>${table([
@@ -3737,7 +3740,12 @@ function renderReceipts() {
         { label: "Статус", render: (row) => badge(row.status) },
         { label: "", render: (row) => `<button class="secondary compact-action" type="button" data-print-batch-price-label="${escapeAttr(row.id)}">Ценник</button>` },
         { label: "", render: (row) => `<button class="secondary compact-action" type="button" data-print-receipt-batch="${escapeAttr(row.id)}">Ордер</button>` },
-        { label: "", render: (row) => batchButton(row.id, "Открыть") },
+        { label: "", render: (row) => {
+            const rev = (state.data.quarantineReviews?.items || []).find(r => r.batch_id === row.id && ["pending","in_review"].includes(r.status));
+            return (row.status === "quarantine" && rev
+              ? `<button class="primary compact-action" type="button" data-quarantine-review="${escapeAttr(rev.id)}" data-quarantine-next-status="approved" title="Одобрить и сделать партию доступной">&#10003; Допустить</button> `
+              : "") + batchButton(row.id, "Открыть");
+          }},
       ], filteredRows(state.data.batches, (row) => [row.id, rawNameById("products", row.product_id), rawNameById("suppliers", row.supplier_id), row.lot, row.serial_number, row.expires_on, row.status]), "Партий пока нет. Сначала создайте товар, поставщика и примите товар на склад.")}</div>
     </div>
   `;

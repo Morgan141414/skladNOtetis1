@@ -2,7 +2,7 @@
 // App shell caching + offline mutation queue via IndexedDB
 
 // Bump CACHE_NAME whenever app.js version changes — forces fresh SW install for all users
-const CACHE_NAME = "sklad-pwa-shell-v105";
+const CACHE_NAME = "sklad-pwa-shell-v106";
 const DB_NAME = "sklad-offline-queue";
 const DB_VERSION = 1;
 const QUEUE_STORE = "mutations";
