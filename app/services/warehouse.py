@@ -1595,7 +1595,7 @@ class WarehouseService:
             ).fetchone()
             totals = connection.execute(
                 """SELECT
-                       COALESCE(SUM(CASE WHEN entry_type = 'credit' AND status = 'posted' THEN amount ELSE 0 END), 0) AS posted_credit,
+                       COALESCE(SUM(CASE WHEN entry_type IN ('credit','release') AND status = 'posted' THEN amount ELSE 0 END), 0) AS posted_credit,
                        COALESCE(SUM(CASE WHEN entry_type IN ('debit','refund') AND status = 'posted' THEN amount ELSE 0 END), 0) AS posted_debit,
                        COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) AS pending_ledger,
                        COUNT(*) AS ledger_entries
