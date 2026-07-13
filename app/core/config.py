@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     smtp_tls: bool = True
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    marketplace_payment_webhook_secret: str | None = None
 
     esf_base_url: str = "https://esf.gov.kz:8443/esf-web/rest/api"
     esf_username: str | None = None

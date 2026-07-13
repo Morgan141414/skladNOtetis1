@@ -35,6 +35,12 @@ BOOLEAN_PARAM_COLUMNS = {
     "is_active",
 }
 
+JSONB_PARAM_COLUMNS = {
+    "audit_log": {"payload"},
+    "marketplace_payments": {"metadata"},
+    "marketplace_payment_events": {"payload"},
+}
+
 
 class PostgresDatabase:
     def __init__(self, database_url: str) -> None:
@@ -128,13 +134,17 @@ def adapt_params_for_query(query: str, params: tuple[Any, ...]) -> tuple[Any, ..
 def _adapt_jsonb_params(query: str, params: tuple[Any, ...]) -> tuple[Any, ...]:
     if Jsonb is None:
         return params
-    if "insert into audit_log" not in query or "payload" not in query or len(params) < 6:
+    jsonb_indexes = _insert_jsonb_param_indexes(query)
+    if not jsonb_indexes:
         return params
-    payload = params[5]
-    if isinstance(payload, str):
-        payload = json.loads(payload)
     adapted = list(params)
-    adapted[5] = Jsonb(payload)
+    for index in jsonb_indexes:
+        if index >= len(adapted):
+            continue
+        payload = adapted[index]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        adapted[index] = Jsonb(payload)
     return tuple(adapted)
 
 
@@ -183,6 +193,25 @@ def _placeholder_targets_boolean(prefix: str) -> bool:
 
 
 def _insert_boolean_param_indexes(query: str) -> set[int]:
+    return _insert_column_param_indexes(query, BOOLEAN_PARAM_COLUMNS)
+
+
+def _insert_jsonb_param_indexes(query: str) -> set[int]:
+    match = re.search(
+        r"\binsert\s+into\s+(?P<table>\w+)\s*\((?P<columns>.*?)\)\s*values\s*\((?P<values>.*?)\)",
+        query,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return set()
+    table = _normalize_identifier(match.group("table"))
+    columns = JSONB_PARAM_COLUMNS.get(table)
+    if not columns:
+        return set()
+    return _insert_column_param_indexes(query, columns)
+
+
+def _insert_column_param_indexes(query: str, target_columns: set[str]) -> set[int]:
     match = re.search(
         r"\binsert\s+into\s+\w+\s*\((?P<columns>.*?)\)\s*values\s*\((?P<values>.*?)\)",
         query,
@@ -197,7 +226,7 @@ def _insert_boolean_param_indexes(query: str) -> set[int]:
     param_index = 0
     for column, value in zip(columns, values, strict=False):
         placeholders = value.count("%s")
-        if placeholders and column in BOOLEAN_PARAM_COLUMNS:
+        if placeholders and column in target_columns:
             indexes.add(param_index)
         param_index += placeholders
     return indexes

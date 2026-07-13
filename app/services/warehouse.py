@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -1383,6 +1384,502 @@ class WarehouseService:
         if not created and errors:
             raise ValidationError("; ".join(errors))
         return created
+
+    # ── Production marketplace orders and payments ─────────────────────────
+
+    def create_marketplace_orders_from_cart(
+        self,
+        actor_id: str,
+        *,
+        warehouse_id: int | None,
+        source: str = "marqet",
+        buyer_name: str | None = None,
+        buyer_phone: str | None = None,
+        buyer_email: str | None = None,
+        delivery_address: str | None = None,
+        notes: str | None = None,
+    ) -> list[dict[str, Any]]:
+        source = self._validate_marketplace_inquiry_source(source) or "marqet"
+        with self.database.transaction() as conn:
+            rows = conn.execute(
+                """SELECT cc.id AS cart_item_id, cc.catalog_item_id, cc.quantity,
+                          ci.product_id, ci.product_name, ci.sku, ci.unit, ci.unit_price,
+                          ci.is_active, ci.supplier_id, s.name AS supplier_name
+                   FROM marketplace_cart_items cc
+                   JOIN supplier_catalog_items ci ON ci.id = cc.catalog_item_id
+                   JOIN suppliers s ON s.id = ci.supplier_id
+                   WHERE cc.actor_id = ? AND ci.is_active = TRUE
+                   ORDER BY ci.supplier_id, cc.created_at""",
+                (actor_id,),
+            ).fetchall()
+            if not rows:
+                raise ValidationError("Cart is empty")
+
+            groups: dict[int, list[dict[str, Any]]] = {}
+            for row in rows:
+                item = dict(row)
+                groups.setdefault(int(item["supplier_id"]), []).append(item)
+
+            created_ids: list[int] = []
+            now = now_iso()
+            for supplier_id, items in groups.items():
+                subtotal = sum(
+                    Decimal(str(item["unit_price"] or "0")) * Decimal(str(item["quantity"]))
+                    for item in items
+                )
+                temp_number = f"MQ-TMP-{uuid.uuid4().hex[:16]}"
+                order_id = insert_and_get_id(
+                    conn,
+                    """INSERT INTO marketplace_orders(
+                         order_number, actor_id, supplier_id, warehouse_id, source, status,
+                         currency, subtotal_amount, delivery_amount, discount_amount, total_amount,
+                         buyer_name, buyer_phone, buyer_email, delivery_address, notes,
+                         created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, 'pending_payment', 'KZT', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        temp_number,
+                        actor_id,
+                        supplier_id,
+                        warehouse_id,
+                        source,
+                        decimal_to_db(subtotal),
+                        decimal_to_db(subtotal),
+                        buyer_name,
+                        buyer_phone,
+                        buyer_email,
+                        delivery_address,
+                        notes,
+                        now,
+                        now,
+                    ),
+                )
+                order_number = f"MQ-{100000 + order_id}"
+                conn.execute("UPDATE marketplace_orders SET order_number = ? WHERE id = ?", (order_number, order_id))
+                for item in items:
+                    quantity = Decimal(str(item["quantity"]))
+                    unit_price = Decimal(str(item["unit_price"] or "0"))
+                    line_total = quantity * unit_price
+                    insert_and_get_id(
+                        conn,
+                        """INSERT INTO marketplace_order_items(
+                             order_id, catalog_item_id, product_id, product_name, sku, unit,
+                             quantity, unit_price, line_total, created_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            order_id,
+                            item["catalog_item_id"],
+                            item.get("product_id"),
+                            item["product_name"],
+                            item.get("sku"),
+                            item.get("unit") or "шт",
+                            decimal_to_db(quantity),
+                            decimal_to_db(unit_price),
+                            decimal_to_db(line_total),
+                            now,
+                        ),
+                    )
+                created_ids.append(order_id)
+
+            conn.execute("DELETE FROM marketplace_cart_items WHERE actor_id = ?", (actor_id,))
+
+        return [self.get_marketplace_order(actor_id, order_id) for order_id in created_ids]
+
+    def list_marketplace_orders(
+        self,
+        actor_id: str,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        where = ["mo.actor_id = ?"]
+        params: list[Any] = [actor_id]
+        if status:
+            where.append("mo.status = ?")
+            params.append(status)
+        where_clause = " AND ".join(where)
+        connection = self.database.connect()
+        try:
+            total = connection.execute(
+                f"SELECT COUNT(*) AS total FROM marketplace_orders mo WHERE {where_clause}",
+                tuple(params),
+            ).fetchone()["total"]
+            rows = connection.execute(
+                f"""SELECT mo.*, s.name AS supplier_name,
+                           (SELECT COUNT(*) FROM marketplace_order_items oi WHERE oi.order_id = mo.id) AS items_count,
+                           (SELECT oi.product_name
+                              FROM marketplace_order_items oi
+                             WHERE oi.order_id = mo.id
+                             ORDER BY oi.id
+                             LIMIT 1) AS product_name,
+                           (SELECT mp.status
+                              FROM marketplace_payments mp
+                             WHERE mp.order_id = mo.id
+                             ORDER BY mp.created_at DESC, mp.id DESC
+                             LIMIT 1) AS payment_status
+                    FROM marketplace_orders mo
+                    JOIN suppliers s ON s.id = mo.supplier_id
+                    WHERE {where_clause}
+                    ORDER BY mo.created_at DESC
+                    LIMIT ? OFFSET ?""",
+                tuple(params + [safe_limit, safe_offset]),
+            ).fetchall()
+            return {"items": [self._order_list_row(dict(row)) for row in rows], "total": int(total)}
+        finally:
+            self._close_connection(connection)
+
+    def list_supplier_marketplace_orders(
+        self,
+        supplier_id: int,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        where = ["mo.supplier_id = ?"]
+        params: list[Any] = [supplier_id]
+        if status:
+            where.append("mo.status = ?")
+            params.append(status)
+        where_clause = " AND ".join(where)
+        connection = self.database.connect()
+        try:
+            total = connection.execute(
+                f"SELECT COUNT(*) AS total FROM marketplace_orders mo WHERE {where_clause}",
+                tuple(params),
+            ).fetchone()["total"]
+            rows = connection.execute(
+                f"""SELECT mo.*, s.name AS supplier_name,
+                           (SELECT COUNT(*) FROM marketplace_order_items oi WHERE oi.order_id = mo.id) AS items_count,
+                           (SELECT oi.product_name
+                              FROM marketplace_order_items oi
+                             WHERE oi.order_id = mo.id
+                             ORDER BY oi.id
+                             LIMIT 1) AS product_name,
+                           (SELECT mp.status
+                              FROM marketplace_payments mp
+                             WHERE mp.order_id = mo.id
+                             ORDER BY mp.created_at DESC, mp.id DESC
+                             LIMIT 1) AS payment_status
+                    FROM marketplace_orders mo
+                    JOIN suppliers s ON s.id = mo.supplier_id
+                    WHERE {where_clause}
+                    ORDER BY mo.created_at DESC
+                    LIMIT ? OFFSET ?""",
+                tuple(params + [safe_limit, safe_offset]),
+            ).fetchall()
+            return {"items": [self._order_list_row(dict(row)) for row in rows], "total": int(total)}
+        finally:
+            self._close_connection(connection)
+
+    def get_marketplace_order(self, actor_id: str, order_id: int) -> dict[str, Any]:
+        order = self._get_marketplace_order_for_actor(actor_id, order_id)
+        return self._marketplace_order_detail(order)
+
+    def get_supplier_marketplace_order(self, supplier_id: int, order_id: int) -> dict[str, Any]:
+        order = self._get_marketplace_order_for_supplier(supplier_id, order_id)
+        return self._marketplace_order_detail(order)
+
+    def bind_marketplace_payment_method(
+        self,
+        actor_id: str,
+        *,
+        provider: str,
+        provider_token: str,
+        brand: str = "unknown",
+        last4: str,
+        expiry_month: int | None = None,
+        expiry_year: int | None = None,
+        holder_name: str | None = None,
+        is_default: bool = False,
+    ) -> dict[str, Any]:
+        provider = provider.strip().lower()
+        provider_token = provider_token.strip()
+        last4 = "".join(ch for ch in last4 if ch.isdigit())[-4:]
+        if not provider or not provider_token:
+            raise ValidationError("provider and provider_token are required")
+        token_digits = "".join(ch for ch in provider_token if ch.isdigit())
+        if 12 <= len(token_digits) <= 19 and token_digits == provider_token.replace(" ", "").replace("-", ""):
+            raise ValidationError("Raw card numbers are not accepted; use a PSP token")
+        if provider_token.isdigit() and len(provider_token) in {3, 4}:
+            raise ValidationError("CVV is not accepted")
+        if len(last4) != 4:
+            raise ValidationError("Only masked card last4 is accepted")
+        with self.database.transaction() as conn:
+            if is_default:
+                conn.execute(
+                    "UPDATE marketplace_payment_methods SET is_default = FALSE, updated_at = ? WHERE actor_id = ?",
+                    (now_iso(), actor_id),
+                )
+            method_id = insert_and_get_id(
+                conn,
+                """INSERT INTO marketplace_payment_methods(
+                     actor_id, provider, provider_token, brand, last4, expiry_month,
+                     expiry_year, holder_name, is_default, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    actor_id,
+                    provider,
+                    provider_token,
+                    brand.strip().lower() or "unknown",
+                    last4,
+                    expiry_month,
+                    expiry_year,
+                    holder_name,
+                    bool(is_default),
+                    now_iso(),
+                    now_iso(),
+                ),
+            )
+        return self.get_marketplace_payment_method(actor_id, method_id)
+
+    def list_marketplace_payment_methods(self, actor_id: str) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            rows = connection.execute(
+                """SELECT id, provider, brand, last4, expiry_month, expiry_year,
+                          holder_name, is_default, status, created_at, updated_at
+                   FROM marketplace_payment_methods
+                   WHERE actor_id = ? AND status <> 'disabled'
+                   ORDER BY is_default DESC, created_at DESC""",
+                (actor_id,),
+            ).fetchall()
+            return {"items": [self._payment_method_public(dict(row)) for row in rows]}
+        finally:
+            self._close_connection(connection)
+
+    def get_marketplace_payment_method(self, actor_id: str, method_id: int) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """SELECT id, provider, brand, last4, expiry_month, expiry_year,
+                          holder_name, is_default, status, created_at, updated_at
+                   FROM marketplace_payment_methods
+                   WHERE id = ? AND actor_id = ? AND status <> 'disabled'""",
+                (method_id, actor_id),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"payment method {method_id} not found")
+            return self._payment_method_public(dict(row))
+        finally:
+            self._close_connection(connection)
+
+    def set_default_marketplace_payment_method(self, actor_id: str, method_id: int) -> dict[str, Any]:
+        with self.database.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM marketplace_payment_methods WHERE id = ? AND actor_id = ? AND status = 'active'",
+                (method_id, actor_id),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"payment method {method_id} not found")
+            conn.execute(
+                "UPDATE marketplace_payment_methods SET is_default = FALSE, updated_at = ? WHERE actor_id = ?",
+                (now_iso(), actor_id),
+            )
+            conn.execute(
+                "UPDATE marketplace_payment_methods SET is_default = TRUE, updated_at = ? WHERE id = ?",
+                (now_iso(), method_id),
+            )
+        return self.get_marketplace_payment_method(actor_id, method_id)
+
+    def delete_marketplace_payment_method(self, actor_id: str, method_id: int) -> None:
+        with self.database.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM marketplace_payment_methods WHERE id = ? AND actor_id = ?",
+                (method_id, actor_id),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"payment method {method_id} not found")
+            conn.execute(
+                "UPDATE marketplace_payment_methods SET status = 'disabled', is_default = FALSE, updated_at = ? WHERE id = ?",
+                (now_iso(), method_id),
+            )
+
+    def create_marketplace_payment(
+        self,
+        actor_id: str,
+        order_id: int,
+        *,
+        provider: str = "manual",
+        payment_method_id: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        with self.database.transaction() as conn:
+            order = self._get_marketplace_order_for_actor_conn(conn, actor_id, order_id)
+            if order["status"] not in {"pending_payment", "draft"}:
+                raise ValidationError("Order is not awaiting payment")
+            if idempotency_key:
+                existing = conn.execute(
+                    "SELECT * FROM marketplace_payments WHERE actor_id = ? AND idempotency_key = ?",
+                    (actor_id, idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    if int(existing["order_id"]) != int(order_id):
+                        raise ConflictError("Idempotency key was already used for another order")
+                    return dict(existing)
+            if payment_method_id is not None:
+                method = conn.execute(
+                    "SELECT id, provider FROM marketplace_payment_methods WHERE id = ? AND actor_id = ? AND status = 'active'",
+                    (payment_method_id, actor_id),
+                ).fetchone()
+                if method is None:
+                    raise NotFoundError(f"payment method {payment_method_id} not found")
+                provider = str(method["provider"])
+            payment_id = insert_and_get_id(
+                conn,
+                """INSERT INTO marketplace_payments(
+                     order_id, actor_id, supplier_id, payment_method_id, provider, method,
+                     status, amount, currency, idempotency_key, metadata, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 'KZT', ?, ?, ?, ?)""",
+                (
+                    order_id,
+                    actor_id,
+                    order["supplier_id"],
+                    payment_method_id,
+                    provider.strip().lower() or "manual",
+                    "saved_card" if payment_method_id else "redirect",
+                    decimal_to_db(Decimal(str(order["total_amount"]))),
+                    idempotency_key,
+                    {},
+                    now_iso(),
+                    now_iso(),
+                ),
+            )
+        return self.get_marketplace_payment(actor_id, payment_id)
+
+    def get_marketplace_payment(self, actor_id: str, payment_id: int) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM marketplace_payments WHERE id = ? AND actor_id = ?",
+                (payment_id, actor_id),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"payment {payment_id} not found")
+            return dict(row)
+        finally:
+            self._close_connection(connection)
+
+    def apply_marketplace_payment_event(
+        self,
+        *,
+        provider: str,
+        provider_event_id: str,
+        provider_payment_id: str,
+        payment_id: int,
+        status: str,
+        amount: Decimal,
+        currency: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if status not in {"paid", "failed", "cancelled", "refunded", "authorized"}:
+            raise ValidationError("Unsupported payment event status")
+        provider = provider.strip().lower()
+        provider_payment_id = provider_payment_id.strip()
+        currency = currency.strip().upper()
+        if not provider or not provider_event_id.strip() or not provider_payment_id:
+            raise ValidationError("provider, provider_event_id and provider_payment_id are required")
+        with self.database.transaction() as conn:
+            existing = conn.execute(
+                """SELECT payment_id FROM marketplace_payment_events
+                   WHERE provider = ? AND provider_event_id = ?""",
+                (provider, provider_event_id),
+            ).fetchone()
+            if existing:
+                if int(existing["payment_id"]) != int(payment_id):
+                    raise ConflictError("Payment event id is already linked to another payment")
+                payment = conn.execute("SELECT * FROM marketplace_payments WHERE id = ?", (payment_id,)).fetchone()
+                if payment is None:
+                    raise NotFoundError(f"payment {payment_id} not found")
+                return dict(payment)
+            payment = conn.execute("SELECT * FROM marketplace_payments WHERE id = ?", (payment_id,)).fetchone()
+            if payment is None:
+                raise NotFoundError(f"payment {payment_id} not found")
+            if str(payment["provider"]).lower() != provider:
+                raise ValidationError("Payment provider mismatch")
+            if str(payment["currency"]).upper() != currency:
+                raise ValidationError("Payment currency mismatch")
+            if Decimal(str(payment["amount"])) != Decimal(str(amount)):
+                raise ValidationError("Payment amount mismatch")
+            existing_provider_payment = conn.execute(
+                """SELECT id FROM marketplace_payments
+                   WHERE provider = ? AND provider_payment_id = ? AND id <> ?""",
+                (provider, provider_payment_id, payment_id),
+            ).fetchone()
+            if existing_provider_payment is not None:
+                raise ConflictError("Provider payment id is already linked to another payment")
+            event_id = insert_and_get_id(
+                conn,
+                """INSERT INTO marketplace_payment_events(
+                     payment_id, provider, provider_event_id, event_type, payload, received_at, processed_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    payment_id,
+                    provider,
+                    provider_event_id,
+                    status,
+                    payload,
+                    now_iso(),
+                    now_iso(),
+                ),
+            )
+            conn.execute(
+                """UPDATE marketplace_payments
+                   SET provider_payment_id = COALESCE(provider_payment_id, ?)
+                   WHERE id = ?""",
+                (provider_payment_id, payment_id),
+            )
+            timestamp_col = {
+                "paid": "paid_at",
+                "failed": "failed_at",
+                "refunded": "refunded_at",
+                "authorized": "authorized_at",
+            }.get(status)
+            if timestamp_col:
+                conn.execute(
+                    f"UPDATE marketplace_payments SET status = ?, updated_at = ?, {timestamp_col} = ? WHERE id = ?",
+                    (status, now_iso(), now_iso(), payment_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE marketplace_payments SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, now_iso(), payment_id),
+                )
+            if status == "paid" and payment["status"] != "paid":
+                self._mark_marketplace_order_paid(conn, int(payment["order_id"]), int(payment["id"]))
+            updated = conn.execute("SELECT * FROM marketplace_payments WHERE id = ?", (payment_id,)).fetchone()
+            result = dict(updated)
+            result["event_id"] = event_id
+            return result
+
+    def get_marketplace_account_summary(self, actor_id: str) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """SELECT
+                     SUM(CASE WHEN status IN ('pending_payment','paid','accepted','preparing','shipped') THEN 1 ELSE 0 END) AS active_orders,
+                     SUM(CASE WHEN status IN ('delivered','completed') THEN 1 ELSE 0 END) AS delivered_orders
+                   FROM marketplace_orders WHERE actor_id = ?""",
+                (actor_id,),
+            ).fetchone()
+            methods = connection.execute(
+                "SELECT COUNT(*) AS n FROM marketplace_payment_methods WHERE actor_id = ? AND status = 'active'",
+                (actor_id,),
+            ).fetchone()
+            return {
+                "active_orders": int(row["active_orders"] or 0),
+                "delivered_orders": int(row["delivered_orders"] or 0),
+                "bonus_points": 0,
+                "saved_payment_methods": int(methods["n"] or 0),
+                "open_messages": 0,
+                "seller_listings": 0,
+            }
+        finally:
+            self._close_connection(connection)
 
     def create_marketplace_inquiry(
         self, catalog_item_id: int, actor_id: str, quantity: float,
@@ -8083,6 +8580,225 @@ class WarehouseService:
         if isinstance(payload, list):
             return [self._json_payload(value) for value in payload]
         return payload
+
+    def _order_list_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "number": row["order_number"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row.get("updated_at"),
+            "total_amount": float(row["total_amount"]) if row.get("total_amount") is not None else None,
+            "currency": row.get("currency") or "KZT",
+            "items_count": int(row.get("items_count") or 0),
+            "supplier_id": row.get("supplier_id"),
+            "supplier_name": row.get("supplier_name"),
+            "product_name": row.get("product_name"),
+            "payment_status": row.get("payment_status") or ("paid" if row.get("status") == "paid" else "unpaid"),
+            "delivery_status": self._delivery_status_for_order(row.get("status")),
+        }
+
+    def _delivery_status_for_order(self, status_value: Any) -> str:
+        status_text = str(status_value or "")
+        if status_text in {"delivered", "completed"}:
+            return "delivered"
+        if status_text == "shipped":
+            return "in_transit"
+        if status_text in {"accepted", "preparing"}:
+            return "preparing"
+        return "not_started"
+
+    def _get_marketplace_order_for_actor_conn(
+        self, connection: Connection, actor_id: str, order_id: int
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            """SELECT mo.*, s.name AS supplier_name
+               FROM marketplace_orders mo
+               JOIN suppliers s ON s.id = mo.supplier_id
+               WHERE mo.id = ? AND mo.actor_id = ?""",
+            (order_id, actor_id),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"marketplace order {order_id} not found")
+        return dict(row)
+
+    def _get_marketplace_order_for_actor(self, actor_id: str, order_id: int) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            return self._get_marketplace_order_for_actor_conn(connection, actor_id, order_id)
+        finally:
+            self._close_connection(connection)
+
+    def _get_marketplace_order_for_supplier(self, supplier_id: int, order_id: int) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """SELECT mo.*, s.name AS supplier_name
+                   FROM marketplace_orders mo
+                   JOIN suppliers s ON s.id = mo.supplier_id
+                   WHERE mo.id = ? AND mo.supplier_id = ?""",
+                (order_id, supplier_id),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"marketplace order {order_id} not found")
+            return dict(row)
+        finally:
+            self._close_connection(connection)
+
+    def _marketplace_order_detail(self, order: dict[str, Any]) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            items = connection.execute(
+                """SELECT id, catalog_item_id, product_id, product_name, sku, unit,
+                          quantity, unit_price, line_total
+                   FROM marketplace_order_items
+                   WHERE order_id = ?
+                   ORDER BY id""",
+                (order["id"],),
+            ).fetchall()
+            payment = connection.execute(
+                """SELECT id, provider, status, amount, currency, payment_url, created_at, updated_at
+                   FROM marketplace_payments
+                   WHERE order_id = ?
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 1""",
+                (order["id"],),
+            ).fetchone()
+            detail = self._order_list_row({
+                **order,
+                "items_count": len(items),
+                "product_name": items[0]["product_name"] if items else None,
+                "payment_status": payment["status"] if payment else None,
+            })
+            detail.update(
+                {
+                    "buyer_name": order.get("buyer_name"),
+                    "buyer_phone": order.get("buyer_phone"),
+                    "buyer_email": order.get("buyer_email"),
+                    "delivery_address": order.get("delivery_address"),
+                    "notes": order.get("notes"),
+                    "items": [
+                        {
+                            "id": row["id"],
+                            "catalog_item_id": row["catalog_item_id"],
+                            "product_id": row["product_id"],
+                            "product_name": row["product_name"],
+                            "sku": row["sku"],
+                            "quantity": float(row["quantity"]),
+                            "unit": row["unit"],
+                            "unit_price": float(row["unit_price"]) if row["unit_price"] is not None else None,
+                            "line_total": float(row["line_total"]) if row["line_total"] is not None else None,
+                            "image_url": None,
+                        }
+                        for row in items
+                    ],
+                    "latest_payment": dict(payment) if payment else None,
+                    "timeline": self._marketplace_order_timeline(order, payment),
+                }
+            )
+            return detail
+        finally:
+            self._close_connection(connection)
+
+    def _marketplace_order_timeline(self, order: dict[str, Any], payment: Row | None) -> list[dict[str, Any]]:
+        timeline = [
+            {
+                "id": "created",
+                "title": "Заказ создан",
+                "description": "Заказ сформирован из корзины.",
+                "created_at": order["created_at"],
+                "status": "draft",
+            }
+        ]
+        if payment:
+            timeline.append(
+                {
+                    "id": f"payment-{payment['id']}",
+                    "title": "Оплата подтверждена" if payment["status"] == "paid" else "Ожидается оплата",
+                    "description": "Статус поступает от платежного провайдера.",
+                    "created_at": payment["updated_at"] or payment["created_at"],
+                    "status": order["status"],
+                }
+            )
+        return timeline
+
+    def _payment_method_public(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": str(row["id"]),
+            "provider": row.get("provider"),
+            "brand": row.get("brand") or "unknown",
+            "last4": row.get("last4"),
+            "expiry_month": row.get("expiry_month"),
+            "expiry_year": row.get("expiry_year"),
+            "holder_name": row.get("holder_name"),
+            "is_default": bool(row.get("is_default")),
+            "status": row.get("status") or "active",
+        }
+
+    def _mark_marketplace_order_paid(
+        self, connection: Connection, order_id: int, payment_id: int
+    ) -> None:
+        payment = connection.execute(
+            "SELECT * FROM marketplace_payments WHERE id = ?",
+            (payment_id,),
+        ).fetchone()
+        if payment is None:
+            raise NotFoundError(f"payment {payment_id} not found")
+        order = connection.execute(
+            "SELECT * FROM marketplace_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if order is None:
+            raise NotFoundError(f"marketplace order {order_id} not found")
+        now = now_iso()
+        connection.execute(
+            "UPDATE marketplace_orders SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ? AND status <> 'paid'",
+            (now, now, order_id),
+        )
+        supplier_id = int(order["supplier_id"])
+        amount = Decimal(str(payment["amount"]))
+        account = connection.execute(
+            "SELECT id FROM marketplace_seller_accounts WHERE supplier_id = ?",
+            (supplier_id,),
+        ).fetchone()
+        if account is None:
+            insert_and_get_id(
+                connection,
+                """INSERT INTO marketplace_seller_accounts(
+                     supplier_id, currency, available_amount, pending_amount, created_at, updated_at
+                   ) VALUES (?, 'KZT', 0, 0, ?, ?)""",
+                (supplier_id, now, now),
+            )
+        source_id = str(payment_id)
+        existing = connection.execute(
+            """SELECT id FROM marketplace_seller_ledger
+               WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'credit'""",
+            (source_id,),
+        ).fetchone()
+        if existing is None:
+            insert_and_get_id(
+                connection,
+                """INSERT INTO marketplace_seller_ledger(
+                     supplier_id, order_id, payment_id, entry_type, status, amount,
+                     currency, description, source_type, source_id, created_at
+                   ) VALUES (?, ?, ?, 'credit', 'posted', ?, 'KZT', ?, 'payment', ?, ?)""",
+                (
+                    supplier_id,
+                    order_id,
+                    payment_id,
+                    decimal_to_db(amount),
+                    f"Оплата заказа {order['order_number']}",
+                    source_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                """UPDATE marketplace_seller_accounts
+                   SET available_amount = CAST(available_amount AS NUMERIC) + CAST(? AS NUMERIC),
+                       updated_at = ?
+                   WHERE supplier_id = ?""",
+                (decimal_to_db(amount), now, supplier_id),
+            )
 
     def _optional_decimal_to_db(self, value: Decimal | int | str | None) -> str | None:
         if value is None:

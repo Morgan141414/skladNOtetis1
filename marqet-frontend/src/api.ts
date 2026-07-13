@@ -426,6 +426,17 @@ export interface PaymentMethodsResponse extends MockableResponse {
   items: PaymentMethod[]
 }
 
+export interface MarketplacePayment {
+  id: number
+  order_id: number
+  provider: string
+  status: 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded'
+  amount: number | null
+  currency: 'KZT'
+  created_at: string
+  paid_at?: string | null
+}
+
 class AccountApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -494,6 +505,54 @@ export const apiGetOrder = (id: number): Promise<MarketplaceOrderDetail> =>
     () => accountReq<MarketplaceOrderDetail>(`/marketplace/orders/${id}`),
     mockOrderDetail(id),
   )
+
+function makeIdempotencyKey(prefix: string): string {
+  const cryptoValue = globalThis.crypto?.randomUUID?.()
+  return cryptoValue ? `${prefix}-${cryptoValue}` : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+export const apiCheckoutMarketplaceOrders = (body: {
+  warehouse_id?: number | null
+  source?: 'marqet' | 'qpartner' | 'api'
+  buyer_name?: string | null
+  buyer_phone?: string | null
+  buyer_email?: string | null
+  delivery_address?: string | null
+  notes?: string | null
+}): Promise<{ items: MarketplaceOrderDetail[] }> =>
+  accountReq<{ items: MarketplaceOrderDetail[] }>('/marketplace/orders/checkout', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': makeIdempotencyKey('checkout') },
+    body: JSON.stringify({ source: 'marqet', warehouse_id: null, ...body }),
+  })
+
+export const apiCreateMarketplacePayment = (
+  orderId: number,
+  body: { provider?: string; payment_method_id?: number | null } = {},
+): Promise<MarketplacePayment> =>
+  accountReq<MarketplacePayment>(`/marketplace/orders/${orderId}/payments`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': makeIdempotencyKey(`payment-${orderId}`) },
+    body: JSON.stringify({
+      provider: body.provider ?? 'manual',
+      payment_method_id: body.payment_method_id ?? null,
+    }),
+  })
+
+export const apiBindPaymentMethod = (body: {
+  provider: string
+  provider_token: string
+  brand?: PaymentMethod['brand']
+  last4: string
+  expiry_month?: number | null
+  expiry_year?: number | null
+  holder_name?: string | null
+  is_default?: boolean
+}): Promise<PaymentMethod> =>
+  accountReq<PaymentMethod>('/marketplace/payment-methods', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 
 export const apiGetPaymentMethods = (): Promise<PaymentMethodsResponse> =>
   withAccountFallback(

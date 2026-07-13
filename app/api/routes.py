@@ -1,9 +1,11 @@
+import hashlib
+import hmac
 import logging
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, File, Header, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Body, Depends, File, Header, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -5610,6 +5612,42 @@ class CartCheckout(BaseModel):
     source: str = Field(default="qpartner", pattern="^(marqet|qpartner|api)$")
 
 
+class MarketplaceOrderCheckout(BaseModel):
+    warehouse_id: int | None = None
+    source: str = Field(default="marqet", pattern="^(marqet|qpartner|api)$")
+    buyer_name: str | None = Field(default=None, max_length=255)
+    buyer_phone: str | None = Field(default=None, max_length=64)
+    buyer_email: str | None = Field(default=None, max_length=255)
+    delivery_address: str | None = Field(default=None, max_length=1000)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class PaymentMethodBind(BaseModel):
+    provider: str = Field(min_length=1, max_length=64)
+    provider_token: str = Field(min_length=8, max_length=512)
+    brand: str = Field(default="unknown", max_length=32)
+    last4: str = Field(min_length=4, max_length=32)
+    expiry_month: int | None = Field(default=None, ge=1, le=12)
+    expiry_year: int | None = Field(default=None, ge=2024, le=2100)
+    holder_name: str | None = Field(default=None, max_length=255)
+    is_default: bool = False
+
+
+class MarketplacePaymentCreate(BaseModel):
+    provider: str = Field(default="manual", max_length=64)
+    payment_method_id: int | None = None
+
+
+class MarketplacePaymentWebhook(BaseModel):
+    payment_id: int
+    status: str = Field(pattern="^(paid|failed|cancelled|refunded|authorized)$")
+    provider_event_id: str = Field(min_length=1, max_length=255)
+    provider_payment_id: str = Field(min_length=1, max_length=255)
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="KZT", pattern="^[A-Z]{3}$")
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 @router.get("/marketplace/cart", tags=["marketplace"])
 def get_cart_endpoint(actor_ctx: ActorContext = Depends(get_actor_context)) -> Any:
     try:
@@ -5663,6 +5701,245 @@ def checkout_cart_endpoint(
         if warehouse_id is None and actor_ctx.warehouse_ids:
             warehouse_id = list(actor_ctx.warehouse_ids)[0]
         return svc.checkout_cart(actor_ctx.actor_id, warehouse_id, body.notes, body.source)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/orders/checkout", status_code=201, tags=["marketplace"])
+def checkout_marketplace_order_endpoint(
+    body: MarketplaceOrderCheckout,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+    idempotency_store: IdempotencyStore = Depends(get_idempotency_store),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Any:
+    try:
+        svc = get_warehouse_service()
+        warehouse_id = body.warehouse_id
+        if warehouse_id is None and actor_ctx.warehouse_ids:
+            warehouse_id = list(actor_ctx.warehouse_ids)[0]
+        result, _ = run_idempotent(
+            idempotency_key=idempotency_key,
+            store=idempotency_store,
+            actor_id=actor_ctx.actor_id,
+            method="POST",
+            path="/api/v1/marketplace/orders/checkout",
+            payload=body,
+            response_status=status.HTTP_201_CREATED,
+            resource_type="marketplace_order_checkout",
+            operation=lambda: {
+                "items": svc.create_marketplace_orders_from_cart(
+                    actor_ctx.actor_id,
+                    warehouse_id=warehouse_id,
+                    source=body.source,
+                    buyer_name=body.buyer_name,
+                    buyer_phone=body.buyer_phone,
+                    buyer_email=body.buyer_email,
+                    delivery_address=body.delivery_address,
+                    notes=body.notes,
+                )
+            },
+        )
+        return result
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/marketplace/account/summary", tags=["marketplace"])
+def marketplace_account_summary(actor_ctx: ActorContext = Depends(get_actor_context)) -> Any:
+    try:
+        return get_warehouse_service().get_marketplace_account_summary(actor_ctx.actor_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/marketplace/orders", tags=["marketplace"])
+def list_marketplace_orders_endpoint(
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = 50,
+    offset: int = 0,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        safe_limit, safe_offset = pagination_meta(limit, offset)
+        return get_warehouse_service().list_marketplace_orders(
+            actor_ctx.actor_id, status=status_filter, limit=safe_limit, offset=safe_offset
+        )
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/marketplace/orders/{order_id}", tags=["marketplace"])
+def get_marketplace_order_endpoint(
+    order_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().get_marketplace_order(actor_ctx.actor_id, order_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/orders/{order_id}/payments", status_code=201, tags=["marketplace"])
+def create_marketplace_payment_endpoint(
+    order_id: int,
+    body: MarketplacePaymentCreate,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+    idempotency_store: IdempotencyStore = Depends(get_idempotency_store),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Any:
+    try:
+        svc = get_warehouse_service()
+        payment, _ = run_idempotent(
+            idempotency_key=idempotency_key,
+            store=idempotency_store,
+            actor_id=actor_ctx.actor_id,
+            method="POST",
+            path=f"/api/v1/marketplace/orders/{order_id}/payments",
+            payload={"order_id": order_id, "body": body},
+            response_status=status.HTTP_201_CREATED,
+            resource_type="marketplace_payment",
+            operation=lambda: svc.create_marketplace_payment(
+                actor_ctx.actor_id,
+                order_id,
+                provider=body.provider,
+                payment_method_id=body.payment_method_id,
+                idempotency_key=idempotency_key,
+            ),
+        )
+        return payment
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/marketplace/payment-methods", tags=["marketplace"])
+def list_marketplace_payment_methods_endpoint(
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().list_marketplace_payment_methods(actor_ctx.actor_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/payment-methods", status_code=201, tags=["marketplace"])
+def bind_marketplace_payment_method_endpoint(
+    body: PaymentMethodBind,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().bind_marketplace_payment_method(
+            actor_ctx.actor_id,
+            provider=body.provider,
+            provider_token=body.provider_token,
+            brand=body.brand,
+            last4=body.last4,
+            expiry_month=body.expiry_month,
+            expiry_year=body.expiry_year,
+            holder_name=body.holder_name,
+            is_default=body.is_default,
+        )
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.patch("/marketplace/payment-methods/{method_id}/default", tags=["marketplace"])
+def set_default_marketplace_payment_method_endpoint(
+    method_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().set_default_marketplace_payment_method(actor_ctx.actor_id, method_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.delete("/marketplace/payment-methods/{method_id}", status_code=204, tags=["marketplace"])
+def delete_marketplace_payment_method_endpoint(
+    method_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Response:
+    try:
+        get_warehouse_service().delete_marketplace_payment_method(actor_ctx.actor_id, method_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/payments/webhook/{provider}", tags=["marketplace"])
+async def marketplace_payment_webhook_endpoint(
+    request: Request,
+    provider: str,
+    body: MarketplacePaymentWebhook,
+    webhook_secret: str | None = Header(default=None, alias="X-Payment-Webhook-Secret"),
+    webhook_signature: str | None = Header(default=None, alias="X-Payment-Signature"),
+) -> Any:
+    settings = get_settings()
+    if not settings.marketplace_payment_webhook_secret or webhook_secret != settings.marketplace_payment_webhook_secret:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Invalid payment webhook secret", "details": {}})
+    raw_body = await request.body()
+    expected_signature = hmac.new(
+        settings.marketplace_payment_webhook_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    provided_signature = (webhook_signature or "").removeprefix("sha256=").strip()
+    if not provided_signature or not hmac.compare_digest(provided_signature, expected_signature):
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Invalid payment webhook signature", "details": {}})
+    try:
+        return get_warehouse_service().apply_marketplace_payment_event(
+            provider=provider,
+            provider_event_id=body.provider_event_id,
+            provider_payment_id=body.provider_payment_id,
+            payment_id=body.payment_id,
+            status=body.status,
+            amount=body.amount,
+            currency=body.currency,
+            payload=body.payload,
+        )
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/marketplace/loyalty", tags=["marketplace"])
+def marketplace_loyalty_endpoint() -> Any:
+    return {
+        "tier": "bronze",
+        "points_balance": 0,
+        "points_pending": 0,
+        "next_tier_points": 5000,
+        "lifetime_spend": 0,
+        "currency": "KZT",
+        "history": [],
+    }
+
+
+@router.get("/supplier/marketplace-orders", tags=["supplier-self"])
+def list_supplier_marketplace_orders_endpoint(
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = 50,
+    offset: int = 0,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    if actor_ctx.supplier_id is None:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
+    try:
+        safe_limit, safe_offset = pagination_meta(limit, offset)
+        return get_warehouse_service().list_supplier_marketplace_orders(
+            actor_ctx.supplier_id, status=status_filter, limit=safe_limit, offset=safe_offset
+        )
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/supplier/marketplace-orders/{order_id}", tags=["supplier-self"])
+def get_supplier_marketplace_order_endpoint(
+    order_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    if actor_ctx.supplier_id is None:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
+    try:
+        return get_warehouse_service().get_supplier_marketplace_order(actor_ctx.supplier_id, order_id)
     except Exception as error:
         raise map_error(error) from error
 

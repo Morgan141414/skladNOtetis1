@@ -1,6 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { apiCheckoutCart, apiGetCart, type Cart } from '../api'
+import { Link } from 'react-router-dom'
+import {
+  apiCheckoutMarketplaceOrders,
+  apiCreateMarketplacePayment,
+  apiGetCart,
+  type Cart,
+  type MarketplaceOrderDetail,
+  type MarketplacePayment,
+} from '../api'
 import { useStore } from '../store'
 import { useToast } from '../components/Toast'
 
@@ -45,6 +52,9 @@ const css = `
 .checkout-submit:disabled { opacity:.55; cursor:not-allowed; }
 .checkout-empty, .checkout-loading, .checkout-success { background:#fff; border:1px solid #E2E8F0; border-radius:16px; padding:50px 22px; text-align:center; color:#64748B; }
 .checkout-success h2, .checkout-empty h2 { color:#1E1B4B; font-size:22px; margin-bottom:8px; }
+.checkout-created { max-width:620px; margin:18px auto 0; display:flex; flex-direction:column; gap:10px; text-align:left; }
+.checkout-created-item { border:1px solid #E2E8F0; border-radius:12px; padding:12px 14px; background:#F8FAFC; color:#334155; font-size:13px; line-height:1.45; }
+.checkout-created-item strong { color:#1E1B4B; display:block; margin-bottom:4px; }
 .checkout-actions { display:flex; justify-content:center; gap:12px; flex-wrap:wrap; margin-top:22px; }
 .checkout-primary, .checkout-secondary { min-height:44px; border-radius:12px; padding:0 18px; display:inline-flex; align-items:center; justify-content:center; font-size:14px; font-weight:800; }
 .checkout-primary { background:var(--brand-grad); color:#fff; }
@@ -64,24 +74,28 @@ const css = `
 `
 
 const deliveryOptions = [
-  { id: 'courier', title: 'Доставка по Казахстану', copy: 'Продавец подтвердит срок и способ доставки в заявке.' },
+  { id: 'courier', title: 'Доставка по Казахстану', copy: 'Продавец подтвердит срок и способ доставки в заказе.' },
   { id: 'pickup', title: 'Самовывоз / склад', copy: 'Подходит для B2B-заказов и локальной передачи товара.' },
 ]
 
 const paymentOptions = [
-  { id: 'invoice', title: 'Счет или оплата продавцу', copy: 'После подтверждения продавец отправит условия оплаты.' },
-  { id: 'installment', title: 'Рассрочный сценарий', copy: 'Заявка сохранит интерес к оплате частями для обработки менеджером.' },
+  { id: 'card', title: 'Банковская карта', copy: 'Создадим платежную попытку. Списание включается через защищенный webhook банка.' },
+  { id: 'invoice', title: 'Счет продавца', copy: 'Заказ сохранится в системе, а оплату подтвердит продавец или менеджер.' },
 ]
+
+type CreatedCheckout = {
+  order: MarketplaceOrderDetail
+  payment?: MarketplacePayment
+}
 
 export default function CheckoutPage() {
   const { user, openAuth } = useStore()
   const { show } = useToast()
-  const nav = useNavigate()
   const [cart, setCart] = useState<Cart | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [createdCount, setCreatedCount] = useState(0)
+  const [createdCheckout, setCreatedCheckout] = useState<CreatedCheckout[]>([])
   const [form, setForm] = useState({
     name: user?.name ?? '',
     phone: user?.phone ?? '',
@@ -116,22 +130,36 @@ export default function CheckoutPage() {
     }
     setSubmitting(true)
     setError(null)
+    const deliveryAddress = [form.city.trim(), form.address.trim()].filter(Boolean).join(', ')
     const notes = [
-      `Покупатель: ${form.name.trim()}`,
-      `Телефон: ${form.phone.trim()}`,
-      `Город: ${form.city.trim()}`,
-      form.address.trim() ? `Адрес: ${form.address.trim()}` : null,
       `Доставка: ${deliveryOptions.find(x => x.id === form.delivery)?.title}`,
       `Оплата: ${paymentOptions.find(x => x.id === form.payment)?.title}`,
       form.comment.trim() ? `Комментарий: ${form.comment.trim()}` : null,
     ].filter(Boolean).join('\n')
 
     try {
-      const created = await apiCheckoutCart({ notes, source: 'marqet' })
-      setCreatedCount(created.length)
+      const created = await apiCheckoutMarketplaceOrders({
+        source: 'marqet',
+        buyer_name: form.name.trim(),
+        buyer_phone: form.phone.trim(),
+        delivery_address: deliveryAddress,
+        notes,
+      })
+      const payments = await Promise.allSettled(
+        created.items.map(order => apiCreateMarketplacePayment(order.id, {
+          provider: form.payment === 'card' ? 'manual_card' : 'manual_invoice',
+        })),
+      )
+      setCreatedCheckout(created.items.map((order, index) => {
+        const payment = payments[index]
+        return {
+          order,
+          payment: payment.status === 'fulfilled' ? payment.value : undefined,
+        }
+      }))
       setCart({ items: [], total_items: 0, total_amount: 0 })
       window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
-      show('Заявки отправлены продавцам')
+      show('Заказы созданы и ожидают оплаты')
     } catch (err: any) {
       setError(err.message || 'Не удалось оформить заказ')
     } finally {
@@ -148,9 +176,9 @@ export default function CheckoutPage() {
         <div className="checkout-head">
           <div>
             <div className="checkout-kicker">Оформление заказа</div>
-            <h1 className="checkout-title">Подтвердите заявку продавцам</h1>
+            <h1 className="checkout-title">Подтвердите заказ и оплату</h1>
             <p className="checkout-sub">
-              marqet.kz создаст заявки по товарам из корзины. Продавцы увидят заказ в qpartner/складе и смогут подтвердить наличие, доставку и условия оплаты.
+              marqet.kz создаст заказы по продавцам, закрепит товары за покупателем и подготовит платежную попытку. Продавцы увидят заказ в qpartner/складе.
             </p>
           </div>
           <Link className="checkout-back" to="/cart">Вернуться в корзину</Link>
@@ -158,19 +186,27 @@ export default function CheckoutPage() {
 
         {loading ? (
           <div className="checkout-loading">Загрузка корзины...</div>
-        ) : createdCount > 0 ? (
+        ) : createdCheckout.length > 0 ? (
           <div className="checkout-success">
-            <h2>Заявки отправлены</h2>
-            <p>Создано заявок: {createdCount}. Дальше продавцы подтвердят условия и ответят в сообщениях.</p>
+            <h2>Заказы созданы</h2>
+            <p>Создано заказов: {createdCheckout.length}. Платежи ожидают подтверждения платежного провайдера или менеджера.</p>
+            <div className="checkout-created">
+              {createdCheckout.map(({ order, payment }) => (
+                <div className="checkout-created-item" key={order.id}>
+                  <strong>{order.number} · {order.supplier_name || 'Продавец'}</strong>
+                  Сумма: {fmt(order.total_amount)} · оплата: {payment?.status || order.payment_status || 'pending'}
+                </div>
+              ))}
+            </div>
             <div className="checkout-actions">
-              <Link className="checkout-primary" to="/messages">Открыть сообщения</Link>
+              <Link className="checkout-primary" to="/account/orders">Открыть мои заказы</Link>
               <Link className="checkout-secondary" to="/">Продолжить покупки</Link>
             </div>
           </div>
         ) : !cart || cart.items.length === 0 ? (
           <div className="checkout-empty">
             <h2>Корзина пуста</h2>
-            <p>Добавьте товары из каталога, чтобы оформить заявку продавцу.</p>
+            <p>Добавьте товары из каталога, чтобы оформить заказ продавцу.</p>
             <div className="checkout-actions">
               <Link className="checkout-primary" to="/">Перейти в каталог</Link>
             </div>
@@ -251,10 +287,10 @@ export default function CheckoutPage() {
               <div className="summary-total"><span>Итого</span><span>{totalKnown ? fmt(cart.total_amount) : 'По запросу'}</span></div>
               {error && <div className="checkout-error" style={{ marginTop: 14 }}>{error}</div>}
               <div className="checkout-note" style={{ marginTop: 14 }}>
-                Это не списывает оплату автоматически. Заказ создаёт заявки продавцам и фиксирует ваши условия для обработки.
+                Мы не храним номер карты и CVV. Деньги будут списаны и зачислены продавцу только после подтверждения от платежного провайдера.
               </div>
               <button className="checkout-submit" type="submit" disabled={submitting}>
-                {submitting ? 'Отправляем...' : 'Отправить заявки продавцам'}
+                {submitting ? 'Создаем заказ...' : 'Создать заказ и платеж'}
               </button>
             </aside>
           </form>
