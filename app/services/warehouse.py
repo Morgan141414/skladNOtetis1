@@ -1746,6 +1746,10 @@ class WarehouseService:
                     f"UPDATE marketplace_orders SET {', '.join(assignments)} WHERE id = ?",
                     tuple(params),
                 )
+                if status == "completed":
+                    self._release_marketplace_order_hold(conn, order_id)
+                elif status == "cancelled":
+                    self._cancel_marketplace_order_hold(conn, order_id, cancel_reason=cancel_reason)
         return self.get_supplier_marketplace_order(supplier_id, order_id)
 
     def bind_marketplace_payment_method(
@@ -2013,8 +2017,11 @@ class WarehouseService:
                     "UPDATE marketplace_payments SET status = ?, updated_at = ? WHERE id = ?",
                     (status, now_iso(), payment_id),
                 )
-            if status == "paid" and payment["status"] != "paid":
+            previous_status = str(payment["status"] or "")
+            if status == "paid" and previous_status != "paid":
                 self._mark_marketplace_order_paid(conn, int(payment["order_id"]), int(payment["id"]))
+            elif status == "refunded" and previous_status != "refunded":
+                self._refund_marketplace_order_payment(conn, int(payment["order_id"]), int(payment["id"]))
             updated = conn.execute("SELECT * FROM marketplace_payments WHERE id = ?", (payment_id,)).fetchone()
             result = dict(updated)
             result["event_id"] = event_id
@@ -8921,6 +8928,41 @@ class WarehouseService:
         )
         supplier_id = int(order["supplier_id"])
         amount = Decimal(str(payment["amount"]))
+        self._ensure_marketplace_seller_account(connection, supplier_id, now)
+        source_id = str(payment_id)
+        existing = connection.execute(
+            """SELECT id FROM marketplace_seller_ledger
+               WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'hold'""",
+            (source_id,),
+        ).fetchone()
+        if existing is None:
+            insert_and_get_id(
+                connection,
+                """INSERT INTO marketplace_seller_ledger(
+                     supplier_id, order_id, payment_id, entry_type, status, amount,
+                     currency, description, source_type, source_id, created_at
+                   ) VALUES (?, ?, ?, 'hold', 'pending', ?, 'KZT', ?, 'payment', ?, ?)""",
+                (
+                    supplier_id,
+                    order_id,
+                    payment_id,
+                    decimal_to_db(amount),
+                    f"Холд оплаты заказа {order['order_number']}",
+                    source_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                """UPDATE marketplace_seller_accounts
+                   SET pending_amount = CAST(pending_amount AS NUMERIC) + CAST(? AS NUMERIC),
+                       updated_at = ?
+                   WHERE supplier_id = ?""",
+                (decimal_to_db(amount), now, supplier_id),
+            )
+
+    def _ensure_marketplace_seller_account(
+        self, connection: Connection, supplier_id: int, now: str
+    ) -> None:
         account = connection.execute(
             "SELECT id FROM marketplace_seller_accounts WHERE supplier_id = ?",
             (supplier_id,),
@@ -8933,36 +8975,207 @@ class WarehouseService:
                    ) VALUES (?, 'KZT', 0, 0, ?, ?)""",
                 (supplier_id, now, now),
             )
-        source_id = str(payment_id)
-        existing = connection.execute(
-            """SELECT id FROM marketplace_seller_ledger
-               WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'credit'""",
-            (source_id,),
+
+    def _release_marketplace_order_hold(
+        self, connection: Connection, order_id: int
+    ) -> None:
+        order = connection.execute(
+            "SELECT * FROM marketplace_orders WHERE id = ?",
+            (order_id,),
         ).fetchone()
-        if existing is None:
+        if order is None:
+            raise NotFoundError(f"marketplace order {order_id} not found")
+        now = now_iso()
+        supplier_id = int(order["supplier_id"])
+        self._ensure_marketplace_seller_account(connection, supplier_id, now)
+        holds = connection.execute(
+            """SELECT * FROM marketplace_seller_ledger
+               WHERE order_id = ? AND entry_type = 'hold' AND status = 'pending'
+               ORDER BY id""",
+            (order_id,),
+        ).fetchall()
+        for hold in holds:
+            amount = Decimal(str(hold["amount"]))
+            source_id = str(hold["source_id"] or hold["payment_id"] or hold["id"])
+            existing_release = connection.execute(
+                """SELECT id FROM marketplace_seller_ledger
+                   WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'release'""",
+                (source_id,),
+            ).fetchone()
+            if existing_release is not None:
+                continue
             insert_and_get_id(
                 connection,
                 """INSERT INTO marketplace_seller_ledger(
                      supplier_id, order_id, payment_id, entry_type, status, amount,
                      currency, description, source_type, source_id, created_at
-                   ) VALUES (?, ?, ?, 'credit', 'posted', ?, 'KZT', ?, 'payment', ?, ?)""",
+                   ) VALUES (?, ?, ?, 'release', 'posted', ?, 'KZT', ?, 'payment', ?, ?)""",
                 (
                     supplier_id,
                     order_id,
-                    payment_id,
+                    hold["payment_id"],
                     decimal_to_db(amount),
-                    f"Оплата заказа {order['order_number']}",
+                    f"Выплата продавцу по заказу {order['order_number']}",
                     source_id,
                     now,
                 ),
             )
             connection.execute(
+                "UPDATE marketplace_seller_ledger SET status = 'posted' WHERE id = ?",
+                (hold["id"],),
+            )
+            connection.execute(
                 """UPDATE marketplace_seller_accounts
-                   SET available_amount = CAST(available_amount AS NUMERIC) + CAST(? AS NUMERIC),
+                   SET pending_amount = CAST(pending_amount AS NUMERIC) - CAST(? AS NUMERIC),
+                       available_amount = CAST(available_amount AS NUMERIC) + CAST(? AS NUMERIC),
+                       updated_at = ?
+                   WHERE supplier_id = ?""",
+                (decimal_to_db(amount), decimal_to_db(amount), now, supplier_id),
+            )
+
+    def _cancel_marketplace_order_hold(
+        self,
+        connection: Connection,
+        order_id: int,
+        *,
+        cancel_reason: str | None = None,
+    ) -> None:
+        order = connection.execute(
+            "SELECT * FROM marketplace_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if order is None:
+            raise NotFoundError(f"marketplace order {order_id} not found")
+        now = now_iso()
+        supplier_id = int(order["supplier_id"])
+        self._ensure_marketplace_seller_account(connection, supplier_id, now)
+        holds = connection.execute(
+            """SELECT * FROM marketplace_seller_ledger
+               WHERE order_id = ? AND entry_type = 'hold' AND status = 'pending'
+               ORDER BY id""",
+            (order_id,),
+        ).fetchall()
+        for hold in holds:
+            amount = Decimal(str(hold["amount"]))
+            source_id = str(hold["source_id"] or hold["payment_id"] or hold["id"])
+            existing_refund = connection.execute(
+                """SELECT id FROM marketplace_seller_ledger
+                   WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'refund'""",
+                (source_id,),
+            ).fetchone()
+            if existing_refund is not None:
+                continue
+            insert_and_get_id(
+                connection,
+                """INSERT INTO marketplace_seller_ledger(
+                     supplier_id, order_id, payment_id, entry_type, status, amount,
+                     currency, description, source_type, source_id, created_at
+                   ) VALUES (?, ?, ?, 'refund', 'posted', ?, 'KZT', ?, 'payment', ?, ?)""",
+                (
+                    supplier_id,
+                    order_id,
+                    hold["payment_id"],
+                    decimal_to_db(amount),
+                    cancel_reason or f"Возврат холда по заказу {order['order_number']}",
+                    source_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE marketplace_seller_ledger SET status = 'cancelled' WHERE id = ?",
+                (hold["id"],),
+            )
+            connection.execute(
+                """UPDATE marketplace_seller_accounts
+                   SET pending_amount = CAST(pending_amount AS NUMERIC) - CAST(? AS NUMERIC),
                        updated_at = ?
                    WHERE supplier_id = ?""",
                 (decimal_to_db(amount), now, supplier_id),
             )
+
+    def _refund_marketplace_order_payment(
+        self, connection: Connection, order_id: int, payment_id: int
+    ) -> None:
+        order = connection.execute(
+            "SELECT * FROM marketplace_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if order is None:
+            raise NotFoundError(f"marketplace order {order_id} not found")
+        payment = connection.execute(
+            "SELECT * FROM marketplace_payments WHERE id = ?",
+            (payment_id,),
+        ).fetchone()
+        if payment is None:
+            raise NotFoundError(f"payment {payment_id} not found")
+        now = now_iso()
+        supplier_id = int(order["supplier_id"])
+        self._ensure_marketplace_seller_account(connection, supplier_id, now)
+        source_id = str(payment_id)
+        existing_refund = connection.execute(
+            """SELECT id FROM marketplace_seller_ledger
+               WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'refund'""",
+            (source_id,),
+        ).fetchone()
+        if existing_refund is not None:
+            return
+        amount = Decimal(str(payment["amount"]))
+        pending_hold = connection.execute(
+            """SELECT id FROM marketplace_seller_ledger
+               WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'hold' AND status = 'pending'""",
+            (source_id,),
+        ).fetchone()
+        released = connection.execute(
+            """SELECT id FROM marketplace_seller_ledger
+               WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'release' AND status = 'posted'""",
+            (source_id,),
+        ).fetchone()
+        if pending_hold is None and released is None:
+            return
+        insert_and_get_id(
+            connection,
+            """INSERT INTO marketplace_seller_ledger(
+                 supplier_id, order_id, payment_id, entry_type, status, amount,
+                 currency, description, source_type, source_id, created_at
+               ) VALUES (?, ?, ?, 'refund', 'posted', ?, 'KZT', ?, 'payment', ?, ?)""",
+            (
+                supplier_id,
+                order_id,
+                payment_id,
+                decimal_to_db(amount),
+                f"Возврат оплаты заказа {order['order_number']}",
+                source_id,
+                now,
+            ),
+        )
+        if pending_hold is not None:
+            connection.execute(
+                """UPDATE marketplace_seller_ledger
+                   SET status = 'cancelled'
+                   WHERE source_type = 'payment' AND source_id = ? AND entry_type = 'hold'""",
+                (source_id,),
+            )
+            connection.execute(
+                """UPDATE marketplace_seller_accounts
+                   SET pending_amount = CAST(pending_amount AS NUMERIC) - CAST(? AS NUMERIC),
+                       updated_at = ?
+                   WHERE supplier_id = ?""",
+                (decimal_to_db(amount), now, supplier_id),
+            )
+        elif released is not None:
+            connection.execute(
+                """UPDATE marketplace_seller_accounts
+                   SET available_amount = CAST(available_amount AS NUMERIC) - CAST(? AS NUMERIC),
+                       updated_at = ?
+                   WHERE supplier_id = ?""",
+                (decimal_to_db(amount), now, supplier_id),
+            )
+        connection.execute(
+            """UPDATE marketplace_orders
+               SET status = 'refunded', updated_at = ?
+               WHERE id = ?""",
+            (now, order_id),
+        )
 
     def _optional_decimal_to_db(self, value: Decimal | int | str | None) -> str | None:
         if value is None:
