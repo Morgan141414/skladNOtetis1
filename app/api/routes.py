@@ -5984,16 +5984,11 @@ async def marketplace_payment_webhook_endpoint(
 
 
 @router.get("/marketplace/loyalty", tags=["marketplace"])
-def marketplace_loyalty_endpoint() -> Any:
-    return {
-        "tier": "bronze",
-        "points_balance": 0,
-        "points_pending": 0,
-        "next_tier_points": 5000,
-        "lifetime_spend": 0,
-        "currency": "KZT",
-        "history": [],
-    }
+def marketplace_loyalty_endpoint(actor_ctx: ActorContext = Depends(get_actor_context)) -> Any:
+    try:
+        return get_warehouse_service().get_marketplace_loyalty(actor_ctx.actor_id)
+    except Exception as error:
+        raise map_error(error) from error
 
 
 @router.get("/supplier/marketplace-orders", tags=["supplier-self"])

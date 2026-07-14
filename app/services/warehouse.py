@@ -2128,7 +2128,20 @@ class WarehouseService:
             row = connection.execute(
                 """SELECT
                      SUM(CASE WHEN status IN ('pending_payment','paid','accepted','preparing','shipped') THEN 1 ELSE 0 END) AS active_orders,
-                     SUM(CASE WHEN status IN ('delivered','completed') THEN 1 ELSE 0 END) AS delivered_orders
+                     SUM(CASE WHEN status IN ('delivered','completed') THEN 1 ELSE 0 END) AS delivered_orders,
+                     COALESCE(SUM(CASE
+                       WHEN status = 'completed'
+                        AND EXISTS (
+                            SELECT 1 FROM marketplace_payments mp
+                             WHERE mp.order_id = marketplace_orders.id
+                               AND mp.status = 'paid'
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM marketplace_payments mp
+                             WHERE mp.order_id = marketplace_orders.id
+                               AND mp.status = 'refunded'
+                        )
+                       THEN total_amount ELSE 0 END), 0) AS completed_spend
                    FROM marketplace_orders WHERE actor_id = ?""",
                 (actor_id,),
             ).fetchone()
@@ -2139,13 +2152,118 @@ class WarehouseService:
             return {
                 "active_orders": int(row["active_orders"] or 0),
                 "delivered_orders": int(row["delivered_orders"] or 0),
-                "bonus_points": 0,
+                "bonus_points": self._marketplace_loyalty_points(row["completed_spend"] or 0),
                 "saved_payment_methods": int(methods["n"] or 0),
                 "open_messages": 0,
                 "seller_listings": 0,
             }
         finally:
             self._close_connection(connection)
+
+    def get_marketplace_loyalty(self, actor_id: str) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            totals = connection.execute(
+                """SELECT
+                     COALESCE(SUM(CASE WHEN mo.status = 'completed' THEN mo.total_amount ELSE 0 END), 0) AS completed_spend,
+                     COALESCE(SUM(CASE WHEN mo.status IN ('paid','accepted','preparing','shipped','delivered') THEN mo.total_amount ELSE 0 END), 0) AS pending_spend
+                   FROM marketplace_orders mo
+                   WHERE mo.actor_id = ?
+                     AND total_amount IS NOT NULL
+                     AND mo.status NOT IN ('cancelled','refund_requested','refunded')
+                     AND EXISTS (
+                         SELECT 1 FROM marketplace_payments mp
+                          WHERE mp.order_id = mo.id
+                            AND mp.status = 'paid'
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM marketplace_payments mp
+                          WHERE mp.order_id = mo.id
+                            AND mp.status = 'refunded'
+                     )""",
+                (actor_id,),
+            ).fetchone()
+            completed_spend = Decimal(str(totals["completed_spend"] or 0))
+            pending_spend = Decimal(str(totals["pending_spend"] or 0))
+            points_balance = self._marketplace_loyalty_points(completed_spend)
+            points_pending = self._marketplace_loyalty_points(pending_spend)
+            tier, next_tier_points = self._marketplace_loyalty_tier(points_balance)
+            rows = connection.execute(
+                """SELECT id, order_number, status, total_amount,
+                          COALESCE(completed_at, paid_at, updated_at, created_at) AS event_at
+                   FROM marketplace_orders mo
+                   WHERE actor_id = ?
+                     AND total_amount IS NOT NULL
+                     AND status IN ('completed','paid','accepted','preparing','shipped','delivered')
+                     AND EXISTS (
+                         SELECT 1 FROM marketplace_payments mp
+                          WHERE mp.order_id = mo.id
+                            AND mp.status = 'paid'
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM marketplace_payments mp
+                          WHERE mp.order_id = mo.id
+                            AND mp.status = 'refunded'
+                     )
+                   ORDER BY event_at DESC, id DESC
+                   LIMIT 20""",
+                (actor_id,),
+            ).fetchall()
+            history: list[dict[str, Any]] = []
+            for row in rows:
+                points = self._marketplace_loyalty_points(row["total_amount"] or 0)
+                if points <= 0:
+                    continue
+                is_completed = row["status"] == "completed"
+                number = row["order_number"] or f"MQ-{row['id']}"
+                history.append(
+                    {
+                        "id": f"order-{row['id']}",
+                        "type": "earn",
+                        "title": (
+                            f"Начисление за заказ {number}"
+                            if is_completed
+                            else f"Ожидает начисления за заказ {number}"
+                        ),
+                        "points_delta": points,
+                        "created_at": row["event_at"],
+                        "order_number": number,
+                    }
+                )
+            return {
+                "tier": tier,
+                "points_balance": points_balance,
+                "points_pending": points_pending,
+                "next_tier_points": next_tier_points,
+                "lifetime_spend": float(completed_spend),
+                "currency": "KZT",
+                "history": history,
+            }
+        finally:
+            self._close_connection(connection)
+
+    @staticmethod
+    def _marketplace_loyalty_points(amount: Any) -> int:
+        value = Decimal(str(amount or 0))
+        if value <= 0:
+            return 0
+        return int(value // Decimal("1000"))
+
+    @staticmethod
+    def _marketplace_loyalty_tier(points: int) -> tuple[str, int]:
+        thresholds = [
+            ("bronze", 5000),
+            ("silver", 15000),
+            ("gold", 50000),
+            ("platinum", 50000),
+        ]
+        if points < 5000:
+            return thresholds[0]
+        if points < 15000:
+            return thresholds[1]
+        if points < 50000:
+            return thresholds[2]
+        return thresholds[3]
 
     def create_marketplace_inquiry(
         self, catalog_item_id: int, actor_id: str, quantity: float,
