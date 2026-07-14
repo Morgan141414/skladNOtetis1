@@ -64,6 +64,12 @@ const css = `
 .checkout-created { max-width:620px; margin:18px auto 0; display:flex; flex-direction:column; gap:10px; text-align:left; }
 .checkout-created-item { border:1px solid #E2E8F0; border-radius:12px; padding:12px 14px; background:#F8FAFC; color:#334155; font-size:13px; line-height:1.45; }
 .checkout-created-item strong { color:#1E1B4B; display:block; margin-bottom:4px; }
+.checkout-payment-state { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+.checkout-status-pill { width:max-content; max-width:100%; border-radius:999px; padding:5px 10px; font-size:11px; font-weight:900; background:#EEF2FF; color:#4338CA; }
+.checkout-status-pill.ok { background:#DCFCE7; color:#166534; }
+.checkout-status-pill.warn { background:#FEF3C7; color:#92400E; }
+.checkout-status-pill.bad { background:#FEE2E2; color:#991B1B; }
+.checkout-status-copy { color:#64748B; font-size:12px; line-height:1.45; }
 .checkout-actions { display:flex; justify-content:center; gap:12px; flex-wrap:wrap; margin-top:22px; }
 .checkout-primary, .checkout-secondary { min-height:44px; border-radius:12px; padding:0 18px; display:inline-flex; align-items:center; justify-content:center; font-size:14px; font-weight:800; }
 .checkout-primary { background:var(--brand-grad); color:#fff; }
@@ -95,6 +101,83 @@ const paymentOptions = [
 type CreatedCheckout = {
   order: MarketplaceOrderDetail
   payment?: MarketplacePayment
+  paymentError?: string
+}
+
+type PaymentState = {
+  label: string
+  copy: string
+  tone: 'ok' | 'warn' | 'bad' | 'info'
+  action?: string
+}
+
+function describePayment(payment: MarketplacePayment | undefined, fallbackStatus?: string | null, paymentError?: string): PaymentState {
+  if (paymentError) {
+    return {
+      label: 'Платеж не создан',
+      copy: `${paymentError}. Откройте заказ и повторите оплату другим способом.`,
+      tone: 'bad',
+    }
+  }
+  if (!payment) {
+    return {
+      label: fallbackStatus === 'paid' ? 'Оплата подтверждена' : 'Платеж ожидает создания',
+      copy: fallbackStatus === 'paid'
+        ? 'Заказ уже отмечен как оплаченный.'
+        : 'Откройте заказ, чтобы создать или повторить платежную попытку.',
+      tone: fallbackStatus === 'paid' ? 'ok' : 'warn',
+    }
+  }
+  switch (payment.status) {
+    case 'requires_action':
+      return {
+        label: 'Нужно подтверждение в банке',
+        copy: payment.payment_url
+          ? 'Перейдите к оплате и завершите 3DS или подтверждение в приложении банка.'
+          : 'Платеж ожидает действия у провайдера. Если ссылка не появилась, откройте заказ и проверьте доступные варианты оплаты.',
+        tone: 'warn',
+        action: payment.payment_url ? 'Подтвердить оплату' : undefined,
+      }
+    case 'authorized':
+      return {
+        label: 'Платеж авторизован',
+        copy: 'Провайдер подтвердил авторизацию. Финальный статус обновится после подтверждения оплаты.',
+        tone: 'ok',
+      }
+    case 'paid':
+      return {
+        label: 'Оплата подтверждена',
+        copy: 'Платеж прошел, заказ передан продавцу в работу.',
+        tone: 'ok',
+      }
+    case 'failed':
+      return {
+        label: 'Оплата не прошла',
+        copy: 'Откройте заказ и попробуйте другой способ оплаты или создайте счет.',
+        tone: 'bad',
+      }
+    case 'cancelled':
+      return {
+        label: 'Платеж отменен',
+        copy: 'Можно открыть заказ и создать новую платежную попытку.',
+        tone: 'bad',
+      }
+    case 'refunded':
+      return {
+        label: 'Возврат оформлен',
+        copy: 'Платеж возвращен покупателю через провайдера.',
+        tone: 'ok',
+      }
+    default:
+      return {
+        label: 'Платеж создан',
+        copy: payment.payment_url
+          ? 'Перейдите по ссылке провайдера для завершения оплаты.'
+          : 'Ожидаем подтверждение от платежного провайдера.',
+        tone: 'info',
+        action: payment.payment_url ? 'Перейти к оплате' : undefined,
+      }
+  }
 }
 
 export default function CheckoutPage() {
@@ -196,6 +279,9 @@ export default function CheckoutPage() {
         return {
           order,
           payment: payment.status === 'fulfilled' ? payment.value : undefined,
+          paymentError: payment.status === 'rejected'
+            ? payment.reason?.message || 'Не удалось создать платеж'
+            : undefined,
         }
       }))
       setCart({ items: [], total_items: 0, total_amount: 0 })
@@ -232,17 +318,24 @@ export default function CheckoutPage() {
             <h2>Заказы созданы</h2>
             <p>Создано заказов: {createdCheckout.length}. После подтверждения оплаты деньги будут защищены холдом marqet.kz до завершения заказа.</p>
             <div className="checkout-created">
-              {createdCheckout.map(({ order, payment }) => (
-                <div className="checkout-created-item" key={order.id}>
-                  <strong>{order.number} · {order.supplier_name || 'Продавец'}</strong>
-                  Сумма: {fmt(order.total_amount)} · оплата: {payment?.status || order.payment_status || 'pending'}
-                  {payment?.payment_url && (
-                    <div style={{ marginTop: 8 }}>
-                      <a className="checkout-secondary" href={payment.payment_url}>Перейти к оплате</a>
+              {createdCheckout.map(({ order, payment, paymentError }) => {
+                const state = describePayment(payment, order.payment_status, paymentError)
+                return (
+                  <div className="checkout-created-item" key={order.id}>
+                    <strong>{order.number} · {order.supplier_name || 'Продавец'}</strong>
+                    Сумма: {fmt(order.total_amount)}
+                    <div className="checkout-payment-state">
+                      <span className={`checkout-status-pill ${state.tone === 'info' ? '' : state.tone}`}>{state.label}</span>
+                      <span className="checkout-status-copy">{state.copy}</span>
+                      {payment?.payment_url && state.action && (
+                        <div>
+                          <a className="checkout-secondary" href={payment.payment_url}>{state.action}</a>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </div>
             <div className="checkout-actions">
               <Link className="checkout-primary" to="/account/orders">Открыть мои заказы</Link>

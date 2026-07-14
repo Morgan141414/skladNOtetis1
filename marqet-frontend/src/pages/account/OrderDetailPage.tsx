@@ -26,8 +26,27 @@ const paymentLabels: Record<MarketplacePayment['status'], string> = {
   refunded: 'Возвращен',
 }
 
+const paymentHelp: Record<MarketplacePayment['status'], string> = {
+  pending: 'Платеж создан и ожидает ответа от провайдера.',
+  requires_action: 'Провайдер ожидает дополнительное действие. Если доступна ссылка, подтвердите оплату через банк или страницу провайдера.',
+  authorized: 'Провайдер подтвердил авторизацию платежа. Финальный статус обновится после подтверждения оплаты.',
+  paid: 'Оплата подтверждена. Заказ передан продавцу в работу.',
+  failed: 'Платеж не прошел. Можно повторить оплату или выбрать другой сохраненный способ.',
+  cancelled: 'Платеж отменен. Можно создать новую платежную попытку.',
+  refunded: 'Платеж возвращен покупателю через провайдера.',
+}
+
+const getContinuePaymentUrl = (payment: MarketplacePayment | null | undefined) =>
+  payment?.payment_url && ['pending', 'requires_action'].includes(payment.status)
+    ? payment.payment_url
+    : null
+
 const canRetryPayment = (order: MarketplaceOrderDetail) =>
-  order.status === 'pending_payment' && (!order.latest_payment || ['pending', 'failed', 'cancelled'].includes(order.latest_payment.status))
+  order.status === 'pending_payment' && (
+    !order.latest_payment
+    || ['pending', 'failed', 'cancelled'].includes(order.latest_payment.status)
+    || (order.latest_payment.status === 'requires_action' && !order.latest_payment.payment_url)
+  )
 
 const canCancelOrder = (order: MarketplaceOrderDetail) =>
   ['draft', 'pending_payment'].includes(order.status)
@@ -90,8 +109,9 @@ export default function OrderDetailPage() {
       })
       setOrder({ ...order, latest_payment: payment, payment_status: payment.status })
       show(selected ? 'Платеж создан по сохраненному способу' : 'Платеж создан как счет для ручного подтверждения')
-      if (payment.payment_url) {
-        window.location.assign(payment.payment_url)
+      const continueUrl = getContinuePaymentUrl(payment)
+      if (continueUrl) {
+        window.location.assign(continueUrl)
       }
     } catch (e) {
       show(e instanceof Error ? e.message : 'Не удалось создать платеж', 'error')
@@ -175,16 +195,29 @@ export default function OrderDetailPage() {
                       ? 'Выберите сохраненный токенизированный способ оплаты или создайте счет для ручного подтверждения.'
                       : 'Сохраненных способов оплаты нет. Можно создать счет для ручного подтверждения.'}
                 </span>
+                <span>
+                  {order.latest_payment
+                    ? paymentHelp[order.latest_payment.status]
+                    : 'После создания платежа здесь появится статус провайдера и ссылка на подтверждение, если она нужна.'}
+                </span>
               </div>
-              {order.latest_payment?.payment_url ? (
-                <a className="acct-primary" href={order.latest_payment.payment_url}>Перейти к оплате</a>
-              ) : (
-                <button className="acct-primary" type="button" onClick={retryPayment} disabled={!canRetryPayment(order) || paying}>
-                  {paying ? 'Создаем...' : 'Повторить оплату'}
-                </button>
-              )}
+              {(() => {
+                const continueUrl = getContinuePaymentUrl(order.latest_payment)
+                if (continueUrl && order.latest_payment) {
+                  return (
+                    <a className="acct-primary" href={continueUrl}>
+                      {order.latest_payment.status === 'requires_action' ? 'Подтвердить оплату' : 'Перейти к оплате'}
+                    </a>
+                  )
+                }
+                return (
+                  <button className="acct-primary" type="button" onClick={retryPayment} disabled={!canRetryPayment(order) || paying}>
+                    {paying ? 'Создаем...' : 'Повторить оплату'}
+                  </button>
+                )
+              })()}
             </div>
-            {!order.latest_payment && canRetryPayment(order) && paymentMethods.length > 0 && (
+            {canRetryPayment(order) && paymentMethods.length > 0 && (
               <div className="acct-row-list" style={{ marginTop: 12 }}>
                 {paymentMethods.map(method => (
                   <button
