@@ -77,7 +77,7 @@ export default function PostListingPage() {
             <p>Ваш товар уже виден тысячам покупателей на marqet.kz</p>
             <div className="success-btns">
               <button onClick={() => nav(`/product/${doneId}`)} style={{padding:'11px 24px',borderRadius:10,background:'var(--brand-grad)',color:'#fff',fontWeight:700,border:'none',cursor:'pointer'}}>Посмотреть</button>
-              <button onClick={() => nav('/account')} style={{padding:'11px 24px',borderRadius:10,background:'#EEF2FF',color:'#5B4FE8',fontWeight:700,border:'none',cursor:'pointer'}}>Мои объявления</button>
+              <button onClick={() => nav('/account/listings')} style={{padding:'11px 24px',borderRadius:10,background:'#EEF2FF',color:'#5B4FE8',fontWeight:700,border:'none',cursor:'pointer'}}>Мои объявления</button>
               <button onClick={() => { setDoneId(null);setTitle('');setDesc('');setPrice('');setCat('');setPhone('');setImageUrl('') }} style={{padding:'11px 24px',borderRadius:10,background:'#F1F5F9',color:'#475569',fontWeight:700,border:'none',cursor:'pointer'}}>Ещё объявление</button>
             </div>
           </div>

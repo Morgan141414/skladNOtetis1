@@ -169,7 +169,7 @@ export default function SellerOrdersPage() {
         </div>
         <div className="seller-head-actions">
           <Link className="seller-secondary" to="/seller/wallet">Кошелек</Link>
-          <Link className="seller-primary" to="/account">Мои объявления</Link>
+          <Link className="seller-primary" to="/account/listings">Мои объявления</Link>
         </div>
       </section>
 

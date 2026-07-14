@@ -94,7 +94,7 @@ const deliveryOptions = [
 ]
 
 const paymentOptions = [
-  { id: 'saved_card', title: 'Сохраненный способ', copy: 'Используем токенизированную карту или платежный метод из личного кабинета.' },
+  { id: 'saved_card', title: 'Сохраненный способ', copy: 'Создадим платежную заявку по токенизированному способу. Если провайдер вернет ссылку, покажем подтверждение.' },
   { id: 'invoice', title: 'Счет / ручное подтверждение', copy: 'Заказ сохранится в системе, оплату подтвердит продавец или менеджер.' },
 ]
 
@@ -109,6 +109,10 @@ type PaymentState = {
   copy: string
   tone: 'ok' | 'warn' | 'bad' | 'info'
   action?: string
+}
+
+function isManualPayment(payment: MarketplacePayment | undefined) {
+  return !payment || ['manual', 'manual_invoice', 'invoice'].includes(payment.provider)
 }
 
 function describePayment(payment: MarketplacePayment | undefined, fallbackStatus?: string | null, paymentError?: string): PaymentState {
@@ -126,6 +130,20 @@ function describePayment(payment: MarketplacePayment | undefined, fallbackStatus
         ? 'Заказ уже отмечен как оплаченный.'
         : 'Откройте заказ, чтобы создать или повторить платежную попытку.',
       tone: fallbackStatus === 'paid' ? 'ok' : 'warn',
+    }
+  }
+  if (payment.status === 'pending' && !payment.payment_url && isManualPayment(payment)) {
+    return {
+      label: 'Счет ожидает подтверждения',
+      copy: 'Заказ создан. Продавец или менеджер подтвердит оплату вручную и обновит статус заказа.',
+      tone: 'warn',
+    }
+  }
+  if (payment.status === 'pending' && !payment.payment_url) {
+    return {
+      label: 'Платежная заявка создана',
+      copy: 'Провайдер пока не вернул ссылку на подтверждение. Откройте заказ позже или выберите счет для ручного подтверждения.',
+      tone: 'warn',
     }
   }
   switch (payment.status) {
@@ -286,7 +304,9 @@ export default function CheckoutPage() {
       }))
       setCart({ items: [], total_items: 0, total_amount: 0 })
       window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
-      show(form.payment === 'saved_card' ? 'Заказы созданы, платежи ожидают подтверждения провайдера' : 'Заказы созданы и ожидают оплаты')
+      show(form.payment === 'saved_card'
+        ? 'Заказы созданы, статус оплаты появится после подтверждения или ссылки провайдера'
+        : 'Заказы созданы и ожидают ручного подтверждения оплаты')
     } catch (err: any) {
       setError(err.message || 'Не удалось оформить заказ')
     } finally {
@@ -303,9 +323,9 @@ export default function CheckoutPage() {
         <div className="checkout-head">
           <div>
             <div className="checkout-kicker">Оформление заказа</div>
-            <h1 className="checkout-title">Подтвердите заказ и оплату</h1>
+            <h1 className="checkout-title">Подтвердите заказ</h1>
             <p className="checkout-sub">
-              marqet.kz создаст заказы по продавцам, закрепит товары за покупателем и подготовит платежную попытку. Продавцы увидят заказ в qpartner/складе.
+              marqet.kz создаст заказы по продавцам, закрепит товары за покупателем и подготовит платежную заявку или счет. Продавцы увидят заказ в qpartner/складе.
             </p>
           </div>
           <Link className="checkout-back" to="/cart">Вернуться в корзину</Link>
@@ -316,7 +336,7 @@ export default function CheckoutPage() {
         ) : createdCheckout.length > 0 ? (
           <div className="checkout-success">
             <h2>Заказы созданы</h2>
-            <p>Создано заказов: {createdCheckout.length}. После подтверждения оплаты деньги будут защищены холдом marqet.kz до завершения заказа.</p>
+            <p>Создано заказов: {createdCheckout.length}. Статус оплаты будет обновлен после подтверждения провайдером, продавцом или менеджером.</p>
             <div className="checkout-created">
               {createdCheckout.map(({ order, payment, paymentError }) => {
                 const state = describePayment(payment, order.payment_status, paymentError)
@@ -464,10 +484,10 @@ export default function CheckoutPage() {
               <div className="summary-total"><span>Итого</span><span>{totalKnown ? fmt(cart.total_amount) : 'По запросу'}</span></div>
               {error && <div className="checkout-error" style={{ marginTop: 14 }}>{error}</div>}
               <div className="checkout-note" style={{ marginTop: 14 }}>
-                Мы не храним номер карты и CVV. После подтверждения оплаты деньги остаются в холде marqet.kz и становятся доступны продавцу только после завершения заказа.
+                Мы не храним номер карты и CVV. Если провайдер вернет ссылку на подтверждение, она появится в заказе; счет подтверждается продавцом или менеджером.
               </div>
               <button className="checkout-submit" type="submit" disabled={submitting}>
-                {submitting ? 'Создаем заказ...' : 'Создать заказ и платеж'}
+                {submitting ? 'Создаем заказ...' : form.payment === 'invoice' ? 'Создать заказ и счет' : 'Создать заказ и платежную заявку'}
               </button>
             </aside>
           </form>

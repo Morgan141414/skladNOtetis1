@@ -17,7 +17,7 @@ export default function AccountHubPage() {
     <AccountShell
       title="Обзор покупателя"
       subtitle="Заказы, бонусы, оплата и продавческие инструменты в одном месте."
-      actions={<Link className="acct-secondary" to="/account">Мои объявления</Link>}
+      actions={<Link className="acct-secondary" to="/account/listings">Мои объявления</Link>}
     >
       {summary?.is_mock && <MockDataNotice unavailable={summary.unavailable} />}
       {error && <div className="acct-notice">{error}</div>}

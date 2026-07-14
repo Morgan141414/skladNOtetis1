@@ -36,6 +36,20 @@ const paymentHelp: Record<MarketplacePayment['status'], string> = {
   refunded: 'Платеж возвращен покупателю через провайдера.',
 }
 
+function isManualPayment(payment: MarketplacePayment | null | undefined) {
+  return !payment || ['manual', 'manual_invoice', 'invoice'].includes(payment.provider)
+}
+
+function describePaymentHelp(payment: MarketplacePayment) {
+  if (payment.status === 'pending' && !payment.payment_url && isManualPayment(payment)) {
+    return 'Счет создан и ожидает ручного подтверждения продавцом или менеджером.'
+  }
+  if (payment.status === 'pending' && !payment.payment_url) {
+    return 'Платежная заявка создана, но провайдер пока не вернул ссылку на подтверждение.'
+  }
+  return paymentHelp[payment.status]
+}
+
 const getContinuePaymentUrl = (payment: MarketplacePayment | null | undefined) =>
   payment?.payment_url && ['pending', 'requires_action'].includes(payment.status)
     ? payment.payment_url
@@ -44,7 +58,7 @@ const getContinuePaymentUrl = (payment: MarketplacePayment | null | undefined) =
 const canRetryPayment = (order: MarketplaceOrderDetail) =>
   order.status === 'pending_payment' && (
     !order.latest_payment
-    || ['pending', 'failed', 'cancelled'].includes(order.latest_payment.status)
+    || ['failed', 'cancelled'].includes(order.latest_payment.status)
     || (order.latest_payment.status === 'requires_action' && !order.latest_payment.payment_url)
   )
 
@@ -197,7 +211,7 @@ export default function OrderDetailPage() {
                 </span>
                 <span>
                   {order.latest_payment
-                    ? paymentHelp[order.latest_payment.status]
+                    ? describePaymentHelp(order.latest_payment)
                     : 'После создания платежа здесь появится статус провайдера и ссылка на подтверждение, если она нужна.'}
                 </span>
               </div>

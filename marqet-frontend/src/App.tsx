@@ -1,4 +1,4 @@
-import { BrowserRouter, Link, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Routes, Route } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useStore } from './store'
 import { apiMe } from './api'
@@ -76,7 +76,8 @@ export default function App() {
           <Route path="/product/:id" element={<ProductDetailPage />} />
           <Route path="/seller/:id" element={<SellerPage />} />
           <Route path="/post" element={<PostListingPage />} />
-          <Route path="/account" element={<AccountPage />} />
+          <Route path="/account" element={<Navigate to="/account/hub" replace />} />
+          <Route path="/account/listings" element={<AccountPage />} />
           <Route path="/account/hub" element={<AccountHubPage />} />
           <Route path="/account/orders" element={<OrdersPage />} />
           <Route path="/account/orders/:id" element={<OrderDetailPage />} />

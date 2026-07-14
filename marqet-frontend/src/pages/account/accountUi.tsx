@@ -9,7 +9,7 @@ const navItems = [
   { to: '/account/payment-methods', label: 'Оплата', icon: 'card' },
   { to: '/account/loyalty', label: 'Бонусы', icon: 'star' },
   { to: '/messages', label: 'Поддержка', icon: 'message' },
-  { to: '/account', label: 'Объявления', icon: 'tag' },
+  { to: '/account/listings', label: 'Объявления', icon: 'tag' },
 ]
 
 export function AccountIcon({ name, size = 18 }: { name: string; size?: number }) {
