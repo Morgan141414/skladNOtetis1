@@ -520,6 +520,8 @@ const accountEnv = (import.meta as ImportMeta & { env?: Record<string, string | 
 const USE_ACCOUNT_MOCKS =
   accountEnv.VITE_MARQET_ACCOUNT_MOCKS === '1' ||
   accountEnv.DEV === true
+const ALLOW_ACCOUNT_UNAVAILABLE_MOCKS =
+  accountEnv.VITE_MARQET_ACCOUNT_UNAVAILABLE_MOCKS === '1'
 
 function markMock<T extends MockableResponse>(value: T, unavailable = false): T {
   return { ...value, is_mock: true, unavailable }
@@ -533,7 +535,11 @@ async function withAccountFallback<T extends MockableResponse>(
   try {
     return await real()
   } catch (error) {
-    if (error instanceof AccountApiError && (error.status === 404 || error.status === 501)) {
+    if (
+      ALLOW_ACCOUNT_UNAVAILABLE_MOCKS &&
+      error instanceof AccountApiError &&
+      (error.status === 404 || error.status === 501)
+    ) {
       return markMock(mock, true)
     }
     throw error

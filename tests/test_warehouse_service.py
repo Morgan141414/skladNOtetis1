@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.domain.enums import AuditAction, BatchStatus, InventoryStatus, QuarantineReviewStatus
 from app.domain.errors import (
@@ -135,6 +137,74 @@ class WarehouseServiceTest(TestCase):
                     category_id=self.category["id"],
                 )
             )
+
+    def test_marketplace_payment_method_stores_token_fingerprint(self) -> None:
+        connection = self.database.connect()
+        connection.execute(
+            """CREATE TABLE marketplace_payment_methods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                provider_token TEXT NOT NULL,
+                brand TEXT NOT NULL DEFAULT 'unknown',
+                last4 TEXT NOT NULL,
+                expiry_month INTEGER,
+                expiry_year INTEGER,
+                holder_name TEXT,
+                is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.commit()
+
+        with patch(
+            "app.services.warehouse.get_settings",
+            return_value=SimpleNamespace(
+                marketplace_payment_token_secret="unit-test-token-secret",
+                jwt_hmac_secret=None,
+                marketplace_payment_webhook_secret=None,
+                deployment_mode="production",
+            ),
+        ):
+            method = self.service.bind_marketplace_payment_method(
+                "buyer-1",
+                provider="test_psp",
+                provider_token="tok_live_sensitive_12345",
+                brand="visa",
+                last4="4242",
+                is_default=True,
+            )
+
+        row = connection.execute(
+            "SELECT provider_token FROM marketplace_payment_methods WHERE id = ?",
+            (int(method["id"]),),
+        ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertNotEqual(row["provider_token"], "tok_live_sensitive_12345")
+        self.assertTrue(str(row["provider_token"]).startswith("hmac-sha256:"))
+        self.assertEqual(len(str(row["provider_token"])), len("hmac-sha256:") + 64)
+
+    def test_marketplace_payment_method_requires_token_secret_in_production(self) -> None:
+        with patch(
+            "app.services.warehouse.get_settings",
+            return_value=SimpleNamespace(
+                marketplace_payment_token_secret=None,
+                jwt_hmac_secret=None,
+                marketplace_payment_webhook_secret=None,
+                deployment_mode="production",
+            ),
+        ):
+            with self.assertRaises(ValidationError):
+                self.service.bind_marketplace_payment_method(
+                    "buyer-1",
+                    provider="test_psp",
+                    provider_token="tok_live_sensitive_12345",
+                    brand="visa",
+                    last4="4242",
+                )
 
     def test_catalog_entries_can_be_updated_with_audit_trail(self) -> None:
         category = self.service.update_category(

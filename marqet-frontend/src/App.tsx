@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Link, Routes, Route } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useStore } from './store'
 import { apiMe } from './api'
@@ -96,11 +96,11 @@ export default function App() {
           <div style={{marginTop:6,opacity:.7}}>ВСЁ, ЧТО НУЖНО. В ОДНОМ МЕСТЕ.</div>
           <div className="footer-links">
             <a href="mailto:info@marqet.kz">info@marqet.kz</a>
-            <a href="/">Каталог</a>
-            <a href="/post">Подать объявление</a>
-            <a href="/favorites">Избранное</a>
-            <a href="/cart">Корзина</a>
-            <a href="/account/hub">Личный кабинет</a>
+            <Link to="/">Каталог</Link>
+            <Link to="/post">Подать объявление</Link>
+            <Link to="/favorites">Избранное</Link>
+            <Link to="/cart">Корзина</Link>
+            <Link to="/account/hub">Личный кабинет</Link>
           </div>
           <div style={{marginTop:12,opacity:.4,fontSize:11}}>© 2026 marqet.kz — Маркетплейс Казахстана</div>
         </footer>

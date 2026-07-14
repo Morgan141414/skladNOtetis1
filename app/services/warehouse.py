@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import math
 import uuid
@@ -9,6 +11,7 @@ from enum import Enum
 from sqlite3 import Connection, Row
 from typing import Any
 
+from app.core.config import get_settings
 from app.domain.enums import (
     AuditAction,
     BatchStatus,
@@ -1882,6 +1885,7 @@ class WarehouseService:
             raise ValidationError("CVV is not accepted")
         if len(last4) != 4:
             raise ValidationError("Only masked card last4 is accepted")
+        token_fingerprint = self._marketplace_payment_token_fingerprint(provider, provider_token)
         with self.database.transaction() as conn:
             if is_default:
                 conn.execute(
@@ -1897,7 +1901,7 @@ class WarehouseService:
                 (
                     actor_id,
                     provider,
-                    provider_token,
+                    token_fingerprint,
                     brand.strip().lower() or "unknown",
                     last4,
                     expiry_month,
@@ -9317,6 +9321,22 @@ class WarehouseService:
             "is_default": bool(row.get("is_default")),
             "status": row.get("status") or "active",
         }
+
+    @staticmethod
+    def _marketplace_payment_token_fingerprint(provider: str, provider_token: str) -> str:
+        settings = get_settings()
+        secret = settings.marketplace_payment_token_secret
+        if not secret:
+            if settings.deployment_mode == "production":
+                raise ValidationError("Payment token fingerprint secret is not configured")
+            secret = (
+                settings.jwt_hmac_secret
+                or settings.marketplace_payment_webhook_secret
+                or "sklad-demo-payment-token-secret"
+            )
+        payload = f"{provider.strip().lower()}:{provider_token.strip()}".encode("utf-8")
+        digest = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        return f"hmac-sha256:{digest}"
 
     def _mark_marketplace_order_paid(
         self, connection: Connection, order_id: int, payment_id: int
