@@ -5233,6 +5233,40 @@ def get_catalog_item(
         raise map_error(error) from error
 
 
+@router.get("/marketplace/catalog/{item_id}/favorite", tags=["marketplace"])
+def get_catalog_item_favorite_endpoint(
+    item_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().get_catalog_item_favorite_state(item_id, actor_ctx.actor_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.post("/marketplace/catalog/{item_id}/favorite", tags=["marketplace"])
+def toggle_catalog_item_favorite_endpoint(
+    item_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().toggle_catalog_item_favorite(item_id, actor_ctx.actor_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
+@router.get("/marketplace/my-favorites", tags=["marketplace"])
+def list_my_catalog_favorites_endpoint(
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().list_catalog_item_favorites(actor_ctx.actor_id, limit=limit, offset=offset)
+    except Exception as error:
+        raise map_error(error) from error
+
+
 class CatalogItemReviewCreate(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str | None = None

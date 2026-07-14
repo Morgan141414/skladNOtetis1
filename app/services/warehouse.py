@@ -877,6 +877,79 @@ class WarehouseService:
         finally:
             self._close_connection(connection)
 
+    def get_catalog_item_favorite_state(self, catalog_item_id: int, actor_id: str) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            self._require_active(connection, "supplier_catalog_items", catalog_item_id)
+            favorite = connection.execute(
+                "SELECT id FROM marketplace_favorites WHERE actor_id = ? AND catalog_item_id = ?",
+                (actor_id, catalog_item_id),
+            ).fetchone()
+            likes_count = connection.execute(
+                "SELECT COUNT(*) AS n FROM marketplace_favorites WHERE catalog_item_id = ?",
+                (catalog_item_id,),
+            ).fetchone()
+            return {"favorited": favorite is not None, "likes_count": likes_count["n"] if likes_count else 0}
+        finally:
+            self._close_connection(connection)
+
+    def toggle_catalog_item_favorite(self, catalog_item_id: int, actor_id: str) -> dict[str, Any]:
+        with self.database.transaction() as connection:
+            self._require_active(connection, "supplier_catalog_items", catalog_item_id)
+            existing = connection.execute(
+                "SELECT id FROM marketplace_favorites WHERE actor_id = ? AND catalog_item_id = ?",
+                (actor_id, catalog_item_id),
+            ).fetchone()
+            if existing:
+                connection.execute("DELETE FROM marketplace_favorites WHERE id = ?", (existing["id"],))
+                favorited = False
+            else:
+                connection.execute(
+                    "INSERT INTO marketplace_favorites (actor_id, catalog_item_id) VALUES (?, ?)",
+                    (actor_id, catalog_item_id),
+                )
+                favorited = True
+            likes_count = connection.execute(
+                "SELECT COUNT(*) AS n FROM marketplace_favorites WHERE catalog_item_id = ?",
+                (catalog_item_id,),
+            ).fetchone()
+            return {"favorited": favorited, "likes_count": likes_count["n"] if likes_count else 0}
+
+    def list_catalog_item_favorites(self, actor_id: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            total_row = connection.execute(
+                """SELECT COUNT(*) AS n
+                   FROM marketplace_favorites mf
+                   JOIN supplier_catalog_items ci ON ci.id = mf.catalog_item_id
+                   WHERE mf.actor_id = ? AND ci.is_active = TRUE""",
+                (actor_id,),
+            ).fetchone()
+            rows = connection.execute(
+                """
+                SELECT ci.*, s.name AS supplier_name, s.city AS supplier_city,
+                       s.rating AS supplier_rating, s.phone AS supplier_phone,
+                       s.email AS supplier_email, s.delivery_days AS supplier_delivery_days,
+                       s.is_verified AS supplier_is_verified,
+                       r.avg_rating, r.review_count,
+                       mf.created_at AS favorited_at
+                FROM marketplace_favorites mf
+                JOIN supplier_catalog_items ci ON ci.id = mf.catalog_item_id
+                JOIN suppliers s ON s.id = ci.supplier_id
+                LEFT JOIN (
+                    SELECT catalog_item_id, ROUND(AVG(rating), 1) AS avg_rating, COUNT(*) AS review_count
+                    FROM catalog_item_reviews WHERE status = 'approved' GROUP BY catalog_item_id
+                ) r ON r.catalog_item_id = ci.id
+                WHERE mf.actor_id = ? AND ci.is_active = TRUE
+                ORDER BY mf.created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (actor_id, limit, offset),
+            ).fetchall()
+            return {"items": [dict(r) for r in rows], "total": total_row["n"] if total_row else 0}
+        finally:
+            self._close_connection(connection)
+
     # ── Catalog item reviews (product-level ratings, like Kaspi/Amazon) ─────
 
     def create_catalog_item_review(
