@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useStore } from '../store'
-import { apiAddToCart, apiToggleFavorite } from '../api'
+import { apiAddToCart, apiCheckFavorite, apiToggleFavorite } from '../api'
 import { useToast } from './Toast'
 
 export interface Product {
@@ -37,6 +37,7 @@ const css = `
 .pcard-fav { position:absolute; top:10px; right:10px; width:32px; height:32px; border-radius:50%; background:#fff; border:none; box-shadow:0 2px 8px rgba(0,0,0,.12); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:2; transition:all .18s; }
 .pcard-fav:hover { transform:scale(1.15); }
 .pcard-fav.active { background:#FEF2F2; }
+.pcard-fav:disabled { opacity:.65; cursor:wait; transform:none; }
 .pcard-body { padding:14px 16px 16px; flex:1; display:flex; flex-direction:column; gap:5px; }
 .pcard-name { font-size:15px; font-weight:700; color:#1E1B4B; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .pcard-name:hover { color:#5B4FE8; }
@@ -89,20 +90,44 @@ export default function ProductCard({ p, onContact }: { p: Product; onContact?: 
   const { show } = useToast()
   const [favorited, setFavorited] = useState(false)
   const [likes, setLikes] = useState(p.likes_count ?? 0)
+  const [favoriteBusy, setFavoriteBusy] = useState(false)
   const [cartAdded, setCartAdded] = useState(false)
   const [copied, setCopied] = useState(false)
   const promoted = Boolean(p.promoted_until && new Date(p.promoted_until) > new Date())
   const monthlyPrice = monthly(p.price)
 
+  useEffect(() => {
+    setLikes(p.likes_count ?? 0)
+    if (!user) {
+      setFavorited(false)
+      return
+    }
+    let mounted = true
+    apiCheckFavorite(p.id)
+      .then(result => {
+        if (!mounted) return
+        setFavorited(result.favorited)
+        setLikes(result.likes_count)
+      })
+      .catch(() => {})
+    return () => { mounted = false }
+  }, [p.id, p.likes_count, user])
+
   async function handleFav(e: React.MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
     if (!user) { openAuth('login'); return }
-    const r = await apiToggleFavorite(p.id).catch(() => null)
-    if (r) {
+    if (favoriteBusy) return
+    setFavoriteBusy(true)
+    try {
+      const r = await apiToggleFavorite(p.id)
       setFavorited(r.favorited)
       setLikes(r.likes_count)
       show(r.favorited ? 'Добавлено в избранное' : 'Убрано из избранного')
+    } catch {
+      show('Не удалось обновить избранное')
+    } finally {
+      setFavoriteBusy(false)
     }
   }
 
@@ -159,7 +184,7 @@ export default function ProductCard({ p, onContact }: { p: Product; onContact?: 
           </div>
         </Link>
 
-        <button className={`pcard-fav ${favorited ? 'active' : ''}`} onClick={handleFav} aria-label={favorited ? 'Убрать из избранного' : 'Добавить в избранное'}>
+        <button className={`pcard-fav ${favorited ? 'active' : ''}`} onClick={handleFav} disabled={favoriteBusy} aria-label={favorited ? 'Убрать из избранного' : 'Добавить в избранное'}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill={favorited ? '#EF4444' : 'none'} stroke={favorited ? '#EF4444' : '#94A3B8'} strokeWidth="2">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>

@@ -362,6 +362,17 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   UNIQUE(actor_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS marketplace_favorites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_id TEXT NOT NULL,
+  catalog_item_id INTEGER NOT NULL REFERENCES supplier_catalog_items(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(actor_id, catalog_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mf_actor ON marketplace_favorites(actor_id);
+CREATE INDEX IF NOT EXISTS idx_mf_item ON marketplace_favorites(catalog_item_id);
+
 CREATE INDEX IF NOT EXISTS idx_notifications_warehouse_read
   ON notifications(warehouse_id, is_read, created_at DESC, id DESC);
 

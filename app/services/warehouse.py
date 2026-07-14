@@ -835,7 +835,8 @@ class WarehouseService:
                        s.email AS supplier_email, s.delivery_days AS supplier_delivery_days,
                        s.is_verified AS supplier_is_verified,
                        p.name AS linked_product_name,
-                       r.avg_rating, r.review_count
+                       r.avg_rating, r.review_count,
+                       COALESCE(f.likes_count, 0) AS likes_count
                 FROM supplier_catalog_items ci
                 JOIN suppliers s ON s.id = ci.supplier_id
                 LEFT JOIN products p ON p.id = ci.product_id
@@ -843,6 +844,10 @@ class WarehouseService:
                     SELECT catalog_item_id, ROUND(AVG(rating), 1) AS avg_rating, COUNT(*) AS review_count
                     FROM catalog_item_reviews WHERE status = 'approved' GROUP BY catalog_item_id
                 ) r ON r.catalog_item_id = ci.id
+                LEFT JOIN (
+                    SELECT catalog_item_id, COUNT(*) AS likes_count
+                    FROM marketplace_favorites GROUP BY catalog_item_id
+                ) f ON f.catalog_item_id = ci.id
                 {where_clause}
                 ORDER BY {order_clause}
                 LIMIT ? OFFSET ?
@@ -862,13 +867,18 @@ class WarehouseService:
                        s.rating AS supplier_rating, s.phone AS supplier_phone,
                        s.email AS supplier_email, s.delivery_days AS supplier_delivery_days,
                        s.is_verified AS supplier_is_verified,
-                       r.avg_rating, r.review_count
+                       r.avg_rating, r.review_count,
+                       COALESCE(f.likes_count, 0) AS likes_count
                 FROM supplier_catalog_items ci
                 JOIN suppliers s ON s.id = ci.supplier_id
                 LEFT JOIN (
                     SELECT catalog_item_id, ROUND(AVG(rating), 1) AS avg_rating, COUNT(*) AS review_count
                     FROM catalog_item_reviews WHERE status = 'approved' GROUP BY catalog_item_id
                 ) r ON r.catalog_item_id = ci.id
+                LEFT JOIN (
+                    SELECT catalog_item_id, COUNT(*) AS likes_count
+                    FROM marketplace_favorites GROUP BY catalog_item_id
+                ) f ON f.catalog_item_id = ci.id
                 WHERE ci.id = ?
                 """,
                 (item_id,),
@@ -932,6 +942,7 @@ class WarehouseService:
                        s.email AS supplier_email, s.delivery_days AS supplier_delivery_days,
                        s.is_verified AS supplier_is_verified,
                        r.avg_rating, r.review_count,
+                       COALESCE(f.likes_count, 0) AS likes_count,
                        mf.created_at AS favorited_at
                 FROM marketplace_favorites mf
                 JOIN supplier_catalog_items ci ON ci.id = mf.catalog_item_id
@@ -940,6 +951,10 @@ class WarehouseService:
                     SELECT catalog_item_id, ROUND(AVG(rating), 1) AS avg_rating, COUNT(*) AS review_count
                     FROM catalog_item_reviews WHERE status = 'approved' GROUP BY catalog_item_id
                 ) r ON r.catalog_item_id = ci.id
+                LEFT JOIN (
+                    SELECT catalog_item_id, COUNT(*) AS likes_count
+                    FROM marketplace_favorites GROUP BY catalog_item_id
+                ) f ON f.catalog_item_id = ci.id
                 WHERE mf.actor_id = ? AND ci.is_active = TRUE
                 ORDER BY mf.created_at DESC
                 LIMIT ? OFFSET ?

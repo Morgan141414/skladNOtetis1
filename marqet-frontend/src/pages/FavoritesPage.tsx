@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useStore } from '../store'
 import { apiGetMyFavorites, apiToggleFavorite } from '../api'
 import type { Product } from '../components/ProductCard'
+import { useToast } from '../components/Toast'
 
 const css = `
 .fav-wrap { max-width:1280px; margin:0 auto; padding:32px 20px 60px; }
@@ -21,6 +22,7 @@ const css = `
 .fcard-seller { font-size:12px; color:#64748B; }
 .fcard-unfav { position:absolute; top:10px; right:10px; width:32px; height:32px; border-radius:50%; background:#fff; border:none; box-shadow:0 2px 8px rgba(0,0,0,.12); display:flex; align-items:center; justify-content:center; cursor:pointer; color:#EF4444; transition:all .18s; }
 .fcard-unfav:hover { background:#FEF2F2; transform:scale(1.1); }
+.fcard-unfav:disabled { opacity:.6; cursor:wait; transform:none; }
 `
 
 function fmt(n: number | null): string {
@@ -46,8 +48,10 @@ function mapRow(r: any): Product {
 
 export default function FavoritesPage() {
   const { user, openAuth } = useStore()
+  const { show } = useToast()
   const [items, setItems] = useState<Array<Product>>([])
   const [loading, setLoading] = useState(true)
+  const [removingIds, setRemovingIds] = useState<Set<number>>(() => new Set())
 
   useEffect(() => {
     if (!user) { openAuth('login'); return }
@@ -58,8 +62,25 @@ export default function FavoritesPage() {
   }, [user])
 
   async function unfav(id: number) {
-    await apiToggleFavorite(id).catch(() => {})
-    setItems(prev => prev.filter(x => x.id !== id))
+    if (removingIds.has(id)) return
+    setRemovingIds(prev => new Set(prev).add(id))
+    try {
+      const result = await apiToggleFavorite(id)
+      if (!result.favorited) {
+        setItems(prev => prev.filter(x => x.id !== id))
+        show('Товар убран из избранного')
+        return
+      }
+      show('Товар остался в избранном')
+    } catch {
+      show('Не удалось убрать из избранного')
+    } finally {
+      setRemovingIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
   }
 
   if (!user) return null
@@ -88,7 +109,13 @@ export default function FavoritesPage() {
           <div className="fav-grid">
             {items.map(p => (
               <div key={p.id} className="fcard">
-                <button className="fcard-unfav" onClick={() => unfav(p.id)} title="Убрать из избранного">
+                <button
+                  className="fcard-unfav"
+                  onClick={() => unfav(p.id)}
+                  disabled={removingIds.has(p.id)}
+                  title="Убрать из избранного"
+                  aria-label={`Убрать ${p.name} из избранного`}
+                >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
                 </button>
                 <Link to={`/product/${p.id}`} style={{textDecoration:'none'}}>
