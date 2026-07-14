@@ -1,6 +1,21 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { apiBindPaymentMethod, apiDeletePaymentMethod, apiGetPaymentMethods, apiSetDefaultPaymentMethod, type PaymentMethod, type PaymentMethodsResponse } from '../../api'
-import { AccountShell, EmptyState, MockDataNotice, PaymentCard } from './accountUi'
+import { AccountIcon, AccountShell, AccountStatCard, EmptyState, MockDataNotice, PaymentCard } from './accountUi'
+
+const providerOptions = [
+  { value: 'test_psp', label: 'Sandbox PSP', hint: 'Для тестовой интеграции и ручной проверки' },
+  { value: 'kaspi_pay', label: 'Kaspi Pay', hint: 'Токен из платежного кабинета Kaspi' },
+  { value: 'halyk_epay', label: 'Halyk ePay', hint: 'Токенизированная карта Halyk/ePay' },
+  { value: 'manual', label: 'Ручной провайдер', hint: 'Для временной операционной обработки' },
+] as const
+
+const brandLabels: Record<PaymentMethod['brand'], string> = {
+  visa: 'Visa',
+  mastercard: 'Mastercard',
+  kaspi: 'Kaspi',
+  halyk: 'Halyk',
+  unknown: 'Другое',
+}
 
 const emptyForm = {
   provider: 'test_psp',
@@ -11,6 +26,24 @@ const emptyForm = {
   expiry_year: '',
   holder_name: '',
   is_default: true,
+}
+
+function normalizeProvider(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, '_').slice(0, 64)
+}
+
+function normalizeToken(value: string) {
+  return value.trim().replace(/\s+/g, '').slice(0, 512)
+}
+
+function validateExpiry(month: string, year: string) {
+  if (!month && !year) return ''
+  const parsedMonth = Number(month)
+  const parsedYear = Number(year)
+  const currentYear = new Date().getFullYear()
+  if (!Number.isInteger(parsedMonth) || parsedMonth < 1 || parsedMonth > 12) return 'Месяц должен быть от 01 до 12'
+  if (!Number.isInteger(parsedYear) || parsedYear < currentYear || parsedYear > currentYear + 20) return `Год должен быть от ${currentYear} до ${currentYear + 20}`
+  return ''
 }
 
 export default function PaymentMethodsPage() {
@@ -49,6 +82,8 @@ export default function PaymentMethodsPage() {
   }
 
   async function remove(id: string) {
+    const method = data?.items.find(item => item.id === id)
+    if (method && !window.confirm(`Удалить способ оплаты ${brandLabels[method.brand]} •••• ${method.last4}?`)) return
     setBusyId(id)
     if (data?.is_mock) {
       updateLocal(items => items.filter(item => item.id !== id))
@@ -69,19 +104,30 @@ export default function PaymentMethodsPage() {
     event.preventDefault()
     setError('')
     const last4 = form.last4.replace(/\D/g, '').slice(-4)
+    const provider = normalizeProvider(form.provider)
+    const providerToken = normalizeToken(form.provider_token)
+    const expiryError = validateExpiry(form.expiry_month, form.expiry_year)
+    if (!provider) {
+      setError('Выберите или укажите платежного провайдера')
+      return
+    }
     if (last4.length !== 4) {
       setError('Укажите последние 4 цифры карты или платежного метода')
       return
     }
-    if (form.provider_token.trim().length < 8) {
-      setError('Укажите токен платежного провайдера')
+    if (providerToken.length < 8) {
+      setError('Укажите токен платежного провайдера. Номер карты, CVV и 3DS-коды сюда вводить нельзя.')
+      return
+    }
+    if (expiryError) {
+      setError(expiryError)
       return
     }
     setSaving(true)
     try {
       const created = await apiBindPaymentMethod({
-        provider: form.provider.trim(),
-        provider_token: form.provider_token.trim(),
+        provider,
+        provider_token: providerToken,
         brand: form.brand,
         last4,
         expiry_month: form.expiry_month ? Number(form.expiry_month) : null,
@@ -105,6 +151,17 @@ export default function PaymentMethodsPage() {
     }
   }
 
+  const methods = data?.items ?? []
+  const defaultMethod = methods.find(method => method.is_default)
+  const activeCount = methods.filter(method => method.status === 'active').length
+  const expiringCount = methods.filter(method => {
+    if (!method.expiry_month || !method.expiry_year) return false
+    const now = new Date()
+    const expiry = new Date(method.expiry_year, method.expiry_month - 1, 1)
+    const sixMonthsAhead = new Date(now.getFullYear(), now.getMonth() + 6, 1)
+    return expiry <= sixMonthsAhead
+  }).length
+
   return (
     <AccountShell
       title="Способы оплаты"
@@ -113,29 +170,57 @@ export default function PaymentMethodsPage() {
     >
       {data?.is_mock && <MockDataNotice unavailable={data.unavailable} />}
       {error && <div className="acct-notice">{error}</div>}
+      <div className="acct-grid">
+        <AccountStatCard label="Активных способов" value={data ? activeCount : '-'} icon="card" />
+        <AccountStatCard label="Основной способ" value={defaultMethod ? `•••• ${defaultMethod.last4}` : 'Не выбран'} icon="check" />
+        <AccountStatCard label="Провайдеры" value={data ? new Set(methods.map(method => method.provider || 'manual')).size : '-'} icon="grid" />
+        <AccountStatCard label="Скоро истекают" value={data ? expiringCount : '-'} icon="clock" />
+      </div>
+      <section className="acct-section acct-payment-security">
+        <div>
+          <span className="acct-security-icon"><AccountIcon name="check" /></span>
+          <h2>Безопасная привязка</h2>
+          <p>
+            marqet.kz хранит только токен платежного провайдера, бренд, срок действия и последние 4 цифры. Полный номер карты,
+            CVV и 3DS-коды должны оставаться на стороне банка или PSP.
+          </p>
+        </div>
+        <div className="acct-payment-rail">
+          <span>Tokenization</span>
+          <span>3DS ready</span>
+          <span>Escrow flow</span>
+        </div>
+      </section>
       {formOpen && (
         <form className="acct-section acct-payment-form" onSubmit={addPaymentMethod}>
           <div>
             <h2>Новый способ оплаты</h2>
-            <p>Введите только токен провайдера и маску карты. Полный номер карты, CVV и 3DS-коды на marqet.kz не сохраняются.</p>
+            <p>Введите токен, полученный от платежного провайдера. Это не номер карты: он нужен только для повторной оплаты через защищенный PSP-flow.</p>
           </div>
           <div className="acct-form-grid">
             <label>
               Провайдер
-              <input value={form.provider} onChange={e => setForm(prev => ({ ...prev, provider: e.target.value }))} required maxLength={64} />
+              <select value={form.provider} onChange={e => {
+                const provider = e.target.value
+                setForm(prev => ({
+                  ...prev,
+                  provider,
+                  brand: provider === 'kaspi_pay' ? 'kaspi' : provider === 'halyk_epay' ? 'halyk' : prev.brand,
+                }))
+              }}>
+                {providerOptions.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
+              </select>
+              <span className="acct-field-hint">{providerOptions.find(option => option.value === form.provider)?.hint}</span>
             </label>
             <label>
-              PSP token
-              <input value={form.provider_token} onChange={e => setForm(prev => ({ ...prev, provider_token: e.target.value }))} required minLength={8} maxLength={512} placeholder="tok_live_..." />
+              Токен провайдера
+              <input value={form.provider_token} onChange={e => setForm(prev => ({ ...prev, provider_token: e.target.value.replace(/\s+/g, '') }))} required minLength={8} maxLength={512} placeholder="tok_live_..." autoComplete="off" />
+              <span className="acct-field-hint">Не вводите PAN, CVV, SMS-коды или пароль банка.</span>
             </label>
             <label>
               Бренд
               <select value={form.brand} onChange={e => setForm(prev => ({ ...prev, brand: e.target.value as PaymentMethod['brand'] }))}>
-                <option value="visa">Visa</option>
-                <option value="mastercard">Mastercard</option>
-                <option value="kaspi">Kaspi</option>
-                <option value="halyk">Halyk</option>
-                <option value="unknown">Другое</option>
+                {Object.entries(brandLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
             </label>
             <label>
@@ -165,23 +250,24 @@ export default function PaymentMethodsPage() {
           </div>
         </form>
       )}
-      <section className="acct-section">
-        <h2>Безопасность платежей</h2>
-        <p>
-          marqet.kz не хранит номер карты, CVV или 3DS-коды. Для повторной оплаты используется только токен платежного
-          провайдера, а в интерфейсе отображаются бренд, срок действия и последние 4 цифры.
-        </p>
-      </section>
       {data && data.items.length === 0 ? (
-        <EmptyState title="Карт пока нет" text="Добавьте токенизированный способ оплаты, полученный от платежного провайдера." />
+        <EmptyState
+          title="Карт пока нет"
+          text="Добавьте токенизированный способ оплаты, чтобы быстрее оплачивать заказы и использовать защищенный escrow-сценарий."
+          action={<button className="acct-primary" onClick={() => setFormOpen(true)}>Добавить способ</button>}
+        />
       ) : (
         <div className="acct-row-list">
           {data?.items.map(method => (
             <section className="acct-section" key={method.id}>
               <PaymentCard method={method} />
               <div className="acct-actions" style={{marginTop:14}}>
-                <button className="acct-secondary" onClick={() => makeDefault(method.id)} disabled={method.is_default || busyId === method.id}>Сделать основной</button>
-                <button className="acct-secondary" onClick={() => remove(method.id)} disabled={busyId === method.id}>Удалить</button>
+                <button className="acct-secondary" onClick={() => makeDefault(method.id)} disabled={method.is_default || busyId === method.id}>
+                  {method.is_default ? 'Уже основной' : busyId === method.id ? 'Обновляем...' : 'Сделать основной'}
+                </button>
+                <button className="acct-secondary" onClick={() => remove(method.id)} disabled={busyId === method.id}>
+                  {busyId === method.id ? 'Удаляем...' : 'Удалить'}
+                </button>
               </div>
             </section>
           ))}

@@ -16,7 +16,7 @@ const fmtDate = (value: string) => new Intl.DateTimeFormat('ru-KZ', { day: '2-di
 
 const nextActions: Partial<Record<MarketplaceOrderStatus, { status: SupplierMarketplaceOrderNextStatus; label: string }[]>> = {
   pending: [{ status: 'accepted', label: 'Принять' }, { status: 'cancelled', label: 'Отменить' }],
-  pending_payment: [{ status: 'accepted', label: 'Принять' }, { status: 'cancelled', label: 'Отменить' }],
+  pending_payment: [{ status: 'cancelled', label: 'Отменить' }],
   paid: [{ status: 'accepted', label: 'Принять' }, { status: 'cancelled', label: 'Отменить' }],
   accepted: [{ status: 'preparing', label: 'В подготовку' }, { status: 'cancelled', label: 'Отменить' }],
   preparing: [{ status: 'shipped', label: 'Отправлен' }, { status: 'cancelled', label: 'Отменить' }],

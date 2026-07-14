@@ -629,6 +629,7 @@ export const apiUpdateSupplierMarketplaceOrderStatus = (
 ): Promise<MarketplaceOrderDetail> =>
   accountReq<MarketplaceOrderDetail>(`/supplier/marketplace-orders/${orderId}/status`, {
     method: 'PATCH',
+    headers: { 'Idempotency-Key': makeIdempotencyKey(`supplier-order-${orderId}-${body.status}`) },
     body: JSON.stringify(body),
   })
 

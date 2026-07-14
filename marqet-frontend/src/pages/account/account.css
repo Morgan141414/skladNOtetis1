@@ -80,12 +80,17 @@
 .acct-payment-card strong { display:block; color:#1E1B4B; margin-bottom:4px; }
 .acct-payment-card span { color:#64748B; font-size:13px; }
 .acct-payment-form { display:grid; gap:16px; }
+.acct-payment-security { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; align-items:center; }
+.acct-security-icon { width:42px; height:42px; border-radius:14px; background:#DCFCE7; color:#166534; display:flex; align-items:center; justify-content:center; margin-bottom:10px; }
+.acct-payment-rail { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.acct-payment-rail span { min-height:30px; border-radius:999px; padding:6px 10px; background:#F1F5F9; color:#475569; font-size:12px; font-weight:900; white-space:nowrap; }
 .acct-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .acct-form-grid label, .acct-check { display:grid; gap:8px; color:#1E1B4B; font-size:13px; font-weight:900; }
 .acct-form-grid input, .acct-form-grid select {
   width:100%; min-height:44px; border:1.5px solid #E2E8F0; border-radius:12px; padding:0 12px;
   color:#1E1B4B; background:#fff; font:inherit; font-weight:700;
 }
+.acct-field-hint { color:#94A3B8; font-size:12px; line-height:1.35; font-weight:700; }
 .acct-form-grid input:focus, .acct-form-grid select:focus {
   outline:none; border-color:#818CF8; box-shadow:0 0 0 3px rgba(99,102,241,.12);
 }
@@ -132,9 +137,10 @@
   .acct-head-actions { margin-top:14px; }
   .acct-nav { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .acct-grid { grid-template-columns:1fr; }
-  .acct-order-row, .acct-detail-top, .acct-payment-card, .acct-payment-status { grid-template-columns:1fr; }
+  .acct-order-row, .acct-detail-top, .acct-payment-card, .acct-payment-status, .acct-payment-security { grid-template-columns:1fr; }
   .acct-form-grid { grid-template-columns:1fr; }
   .acct-order-row { align-items:start; }
   .acct-order-badges { justify-content:flex-start; }
+  .acct-payment-rail { justify-content:flex-start; }
   .acct-pagination { align-items:flex-start; flex-direction:column; }
 }
