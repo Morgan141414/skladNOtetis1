@@ -116,6 +116,34 @@ class APIContractStaticTest(TestCase):
         self.assertIn("PostgreSQL runtime adapter is enabled", dependencies_source)
         self.assertIn("PostgresIdempotencyRepository", dependencies_source)
 
+    def test_catalog_item_reviews_accept_photo_and_display_name(self) -> None:
+        routes_source = ROUTES_PATH.read_text()
+        service_source = (ROOT / "app" / "services" / "warehouse.py").read_text()
+        sqlite_source = (ROOT / "app" / "storage" / "sqlite.py").read_text()
+
+        for snippet in (
+            "image_url: str | None",
+            "reviewer_name: str | None",
+            "image_url=body.image_url",
+            "reviewer_name=body.reviewer_name",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, routes_source)
+        for snippet in (
+            "INSERT INTO catalog_item_reviews",
+            "image_url, reviewer_name, status",
+            "Review image URL must be an absolute URL or uploaded media path",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, service_source)
+        for snippet in (
+            "CREATE TABLE IF NOT EXISTS catalog_item_reviews",
+            "image_url TEXT",
+            "reviewer_name TEXT",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, sqlite_source)
+
     def test_background_jobs_are_explicitly_configured_and_lifespan_managed(self) -> None:
         main_source = (ROOT / "app" / "main.py").read_text()
         config_source = CONFIG_PATH.read_text()

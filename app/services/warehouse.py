@@ -968,17 +968,34 @@ class WarehouseService:
     # ── Catalog item reviews (product-level ratings, like Kaspi/Amazon) ─────
 
     def create_catalog_item_review(
-        self, catalog_item_id: int, rating: int, comment: str | None, reviewer_id: str
+        self,
+        catalog_item_id: int,
+        rating: int,
+        comment: str | None,
+        reviewer_id: str,
+        *,
+        image_url: str | None = None,
+        reviewer_name: str | None = None,
     ) -> dict[str, Any]:
         if not 1 <= rating <= 5:
             raise ValidationError("Rating must be between 1 and 5")
+        image_url = image_url.strip() if image_url else None
+        reviewer_name = reviewer_name.strip() if reviewer_name else None
+        if image_url and not (
+            image_url.startswith("https://")
+            or image_url.startswith("http://")
+            or image_url.startswith("/uploads/")
+        ):
+            raise ValidationError("Review image URL must be an absolute URL or uploaded media path")
         with self.database.transaction() as connection:
             self._require(connection, "supplier_catalog_items", catalog_item_id)
             row = connection.execute(
-                """INSERT INTO catalog_item_reviews (catalog_item_id, rating, comment, reviewer_id, status)
-                   VALUES (?, ?, ?, ?, 'approved')
+                """INSERT INTO catalog_item_reviews (
+                     catalog_item_id, rating, comment, reviewer_id, image_url, reviewer_name, status
+                   )
+                   VALUES (?, ?, ?, ?, ?, ?, 'approved')
                    RETURNING *""",
-                (catalog_item_id, rating, comment, reviewer_id),
+                (catalog_item_id, rating, comment, reviewer_id, image_url, reviewer_name),
             ).fetchone()
             return dict(row)
 

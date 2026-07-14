@@ -5270,6 +5270,8 @@ def list_my_catalog_favorites_endpoint(
 class CatalogItemReviewCreate(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str | None = None
+    image_url: str | None = Field(default=None, max_length=2048)
+    reviewer_name: str | None = Field(default=None, max_length=120)
 
 
 @router.post("/marketplace/catalog/{item_id}/reviews", status_code=201, tags=["marketplace"])
@@ -5280,7 +5282,14 @@ def create_catalog_item_review_endpoint(
 ) -> Any:
     try:
         svc = get_warehouse_service()
-        return svc.create_catalog_item_review(item_id, body.rating, body.comment, actor_ctx.actor_id)
+        return svc.create_catalog_item_review(
+            item_id,
+            body.rating,
+            body.comment,
+            actor_ctx.actor_id,
+            image_url=body.image_url,
+            reviewer_name=body.reviewer_name,
+        )
     except Exception as error:
         raise map_error(error) from error
 

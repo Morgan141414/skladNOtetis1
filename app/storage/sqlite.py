@@ -373,6 +373,21 @@ CREATE TABLE IF NOT EXISTS marketplace_favorites (
 CREATE INDEX IF NOT EXISTS idx_mf_actor ON marketplace_favorites(actor_id);
 CREATE INDEX IF NOT EXISTS idx_mf_item ON marketplace_favorites(catalog_item_id);
 
+CREATE TABLE IF NOT EXISTS catalog_item_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  catalog_item_id INTEGER NOT NULL REFERENCES supplier_catalog_items(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  comment TEXT,
+  reviewer_id TEXT NOT NULL,
+  image_url TEXT,
+  reviewer_name TEXT,
+  status TEXT NOT NULL DEFAULT 'approved',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalog_item_reviews_item
+  ON catalog_item_reviews(catalog_item_id, status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS marketplace_refund_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_id INTEGER NOT NULL REFERENCES marketplace_orders(id) ON DELETE CASCADE,
