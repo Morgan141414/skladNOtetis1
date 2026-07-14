@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useStore } from '../store'
-import { apiGetProduct, apiBrowseCatalog, apiTrackView, apiCheckFavorite, apiToggleFavorite, apiAddToCart } from '../api'
+import {
+  apiAddToCart,
+  apiBrowseCatalog,
+  apiCheckFavorite,
+  apiGetCatalogItemReviews,
+  apiGetProduct,
+  apiToggleFavorite,
+  apiTrackView,
+  type CatalogItemReview,
+} from '../api'
 import type { Product } from '../components/ProductCard'
 import ContactSellerModal from '../components/ContactSellerModal'
 import { useToast } from '../components/Toast'
@@ -63,6 +72,22 @@ const css = `
 .rel-card-body { padding:12px 14px; }
 .rel-card-name { font-size:13px; font-weight:700; color:#1E1B4B; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:4px; }
 .rel-card-price { font-size:15px; font-weight:800; color:#5B4FE8; }
+.reviews-section { margin-top:34px; background:#fff; border:1px solid #E2E8F0; border-radius:16px; padding:22px; }
+.reviews-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; }
+.reviews-title { font-size:20px; font-weight:800; color:#1E1B4B; margin-bottom:4px; }
+.reviews-sub { font-size:13px; color:#64748B; line-height:1.5; }
+.reviews-score { min-width:120px; text-align:right; }
+.reviews-score-main { font-size:30px; font-weight:900; color:#1E1B4B; line-height:1; }
+.reviews-score-meta { font-size:12px; color:#94A3B8; margin-top:4px; }
+.reviews-list { display:grid; gap:12px; margin-top:16px; }
+.review-card { border:1px solid #E2E8F0; border-radius:12px; padding:14px; background:#F8FAFC; }
+.review-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:8px; }
+.review-author { font-size:14px; font-weight:800; color:#1E1B4B; }
+.review-date { font-size:12px; color:#94A3B8; margin-top:2px; }
+.review-stars { color:#F59E0B; font-size:14px; white-space:nowrap; letter-spacing:1px; }
+.review-text { font-size:14px; color:#475569; line-height:1.55; white-space:pre-wrap; }
+.review-empty { border:1px dashed #CBD5E1; border-radius:12px; padding:18px; color:#64748B; font-size:14px; background:#F8FAFC; }
+.review-policy { margin-top:14px; font-size:12px; color:#94A3B8; line-height:1.45; }
 .loading-detail { display:flex; align-items:center; justify-content:center; padding:120px 0; }
 .spinner2 { width:40px; height:40px; border:3px solid #E2E8F0; border-top-color:#5B4FE8; border-radius:50%; animation:spin .7s linear infinite; }
 @keyframes spin { to{transform:rotate(360deg)} }
@@ -114,6 +139,8 @@ export default function ProductDetailPage() {
   const [likes, setLikes] = useState(0)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
   const [cartBusy, setCartBusy] = useState(false)
+  const [reviews, setReviews] = useState<CatalogItemReview[]>([])
+  const [reviewsLoading, setReviewsLoading] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -151,6 +178,23 @@ export default function ProductDetailPage() {
       .then(r => setRelated(r.items.filter(x => x.id !== product.id).slice(0, 4)))
       .catch(() => {})
   }, [product?.category, product?.id])
+
+  useEffect(() => {
+    if (!product?.id) return
+    let mounted = true
+    setReviewsLoading(true)
+    apiGetCatalogItemReviews(product.id)
+      .then(items => {
+        if (mounted) setReviews(items)
+      })
+      .catch(() => {
+        if (mounted) setReviews([])
+      })
+      .finally(() => {
+        if (mounted) setReviewsLoading(false)
+      })
+    return () => { mounted = false }
+  }, [product?.id])
 
   if (loading) return (
     <><style>{css}</style>
@@ -218,6 +262,14 @@ export default function ProductDetailPage() {
   }
 
   const fmt = (n: number | null) => n !== null ? n.toLocaleString('ru-KZ') + ' ₸' : 'Цена по запросу'
+  const fmtReviewDate = (value?: string) => {
+    if (!value) return ''
+    try {
+      return new Intl.DateTimeFormat('ru-KZ', { day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(value))
+    } catch {
+      return ''
+    }
+  }
 
   return (
     <>
@@ -288,6 +340,42 @@ export default function ProductDetailPage() {
             {product.description && (
               <div className="detail-desc">{product.description}</div>
             )}
+
+            <section className="reviews-section">
+              <div className="reviews-head">
+                <div>
+                  <h2 className="reviews-title">Отзывы покупателей</h2>
+                  <p className="reviews-sub">Оценки помогают быстрее понять качество товара и надежность покупки.</p>
+                </div>
+                <div className="reviews-score">
+                  <div className="reviews-score-main">{product.avg_rating != null && product.avg_rating > 0 ? product.avg_rating.toFixed(1) : '—'}</div>
+                  <div className="review-stars">{product.avg_rating != null && product.avg_rating > 0 ? <Stars rating={product.avg_rating} /> : '☆☆☆☆☆'}</div>
+                  <div className="reviews-score-meta">{product.review_count ?? reviews.length} отзыв(ов)</div>
+                </div>
+              </div>
+
+              {reviewsLoading ? (
+                <div className="review-empty">Загружаем отзывы...</div>
+              ) : reviews.length > 0 ? (
+                <div className="reviews-list">
+                  {reviews.slice(0, 6).map(review => (
+                    <article className="review-card" key={review.id}>
+                      <div className="review-top">
+                        <div>
+                          <div className="review-author">{review.reviewer_name || 'Покупатель marqet.kz'}</div>
+                          {fmtReviewDate(review.created_at) && <div className="review-date">{fmtReviewDate(review.created_at)}</div>}
+                        </div>
+                        <div className="review-stars"><Stars rating={review.rating} /></div>
+                      </div>
+                      <div className="review-text">{review.comment || 'Покупатель оставил оценку без комментария.'}</div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="review-empty">Пока нет отзывов. Первый проверенный отзыв появится здесь после покупки.</div>
+              )}
+              <div className="review-policy">Публикация новых отзывов будет открыта после привязки отзыва к завершенному заказу, чтобы защищать рейтинг от накрутки.</div>
+            </section>
           </div>
 
           {/* Right: seller card */}

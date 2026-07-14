@@ -5434,6 +5434,40 @@ def get_supplier_profile_endpoint(
         raise map_error(error) from error
 
 
+def _seller_profile_compat(profile: dict[str, Any]) -> dict[str, Any]:
+    data = dict(profile)
+    catalog_items = [dict(item) for item in data.get("catalog_items") or []]
+    active_listings = data.get("catalog_items_count") or len(catalog_items)
+    reviews_avg = data.get("reviews_avg")
+    data.update(
+        {
+            "seller_rating": float(reviews_avg) if reviews_avg is not None else 0,
+            "total_reviews": data.get("reviews_count") or 0,
+            "active_listings": active_listings,
+            "total_listings": active_listings,
+            "listings": catalog_items,
+        }
+    )
+    return data
+
+
+@router.get("/marketplace/seller/{supplier_id}", tags=["marketplace"])
+def get_seller_profile_compat_endpoint(
+    supplier_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    """Compatibility storefront payload used by the marqet.kz seller page."""
+    try:
+        profile = get_warehouse_service().get_supplier_profile(supplier_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Supplier not found", "details": {}})
+        return _seller_profile_compat(profile)
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise map_error(error) from error
+
+
 @router.get("/supplier/stats", tags=["supplier-self"])
 def get_supplier_dashboard_stats(actor_ctx: ActorContext = Depends(get_actor_context)) -> Any:
     if actor_ctx.supplier_id is None:

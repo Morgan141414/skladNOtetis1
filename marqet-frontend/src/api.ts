@@ -265,6 +265,23 @@ export const apiGetMyFavorites = (params: { limit?: number; offset?: number } = 
   return authReq<{ items: any[]; total: number }>(`/marketplace/my-favorites${suffix}`)
 }
 
+// ── Product Reviews ─────────────────────────────────────────────────────────
+
+export interface CatalogItemReview {
+  id: number
+  catalog_item_id: number
+  rating: number
+  comment?: string | null
+  reviewer_id?: string | null
+  reviewer_name?: string | null
+  image_url?: string | null
+  status?: string
+  created_at?: string
+}
+
+export const apiGetCatalogItemReviews = (itemId: number): Promise<CatalogItemReview[]> =>
+  authReq<CatalogItemReview[]>(`/marketplace/catalog/${itemId}/reviews`)
+
 // ── WhatsApp OTP ──────────────────────────────────────────────────────────────
 
 export const apiSendPhoneOtp = (phone: string): Promise<{ sent: boolean; expires_in: number }> =>
