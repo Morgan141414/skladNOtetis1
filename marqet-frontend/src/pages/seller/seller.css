@@ -18,6 +18,7 @@
 .seller-secondary:disabled, .seller-danger:disabled { opacity:.55; cursor:not-allowed; }
 .seller-section, .seller-empty, .seller-alert, .seller-balance-card { background:#fff; border:1px solid #E2E8F0; border-radius:16px; padding:18px; }
 .seller-alert { border-color:#FCA5A5; background:#FEF2F2; color:#991B1B; font-weight:800; }
+.seller-alert-action { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
 .seller-empty { display:grid; gap:8px; text-align:center; padding:44px 20px; }
 .seller-empty h2, .seller-section h2 { color:#1E1B4B; margin:0; }
 .seller-empty p, .seller-section p { color:#64748B; line-height:1.6; }
@@ -29,6 +30,7 @@
 .seller-order-item .seller-order-row { border:0; border-radius:0; }
 .seller-order-row strong, .seller-ledger-row strong { display:block; color:#1E1B4B; margin-bottom:4px; }
 .seller-order-row span, .seller-ledger-row span, .seller-order-row small, .seller-ledger-row small { display:block; color:#64748B; font-size:13px; line-height:1.45; }
+.seller-ledger-link { display:inline-flex; margin-top:6px; color:#4338CA; font-size:12px; font-weight:900; }
 .seller-money { color:#1E1B4B; font-weight:900; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .seller-wallet-grid { display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:14px; }
 .seller-balance-card { display:grid; gap:8px; min-height:132px; }

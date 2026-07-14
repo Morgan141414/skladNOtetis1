@@ -10,6 +10,7 @@ import './seller.css'
 
 const fmtMoney = (value: number | null | undefined) => `${Number(value ?? 0).toLocaleString('ru-KZ')} ₸`
 const fmtDate = (value: string) => new Intl.DateTimeFormat('ru-KZ', { day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+const PAGE_SIZE = 80
 
 const entryLabels: Record<SupplierMarketplaceLedgerEntry['entry_type'], string> = {
   credit: 'Начисление',
@@ -24,20 +25,38 @@ export default function SellerWalletPage() {
   const [wallet, setWallet] = useState<SupplierMarketplaceWallet | null>(null)
   const [ledger, setLedger] = useState<SupplierMarketplaceLedgerEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    Promise.all([
-      apiGetSupplierMarketplaceWallet(),
-      apiGetSupplierMarketplaceLedger({ limit: 80 }),
-    ])
-      .then(([walletData, ledgerData]) => {
+  async function loadWallet(offset = 0) {
+    setError('')
+    if (offset === 0) setLoading(true)
+    else setLoadingMore(true)
+    try {
+      if (offset === 0) {
+        const [walletData, ledgerData] = await Promise.all([
+          apiGetSupplierMarketplaceWallet(),
+          apiGetSupplierMarketplaceLedger({ limit: PAGE_SIZE, offset }),
+        ])
         setWallet(walletData)
         setLedger(ledgerData.items)
-      })
-      .catch(e => setError(e instanceof Error ? e.message : 'Не удалось загрузить кошелек продавца'))
-      .finally(() => setLoading(false))
+      } else {
+        const ledgerData = await apiGetSupplierMarketplaceLedger({ limit: PAGE_SIZE, offset })
+        setLedger(current => [...current, ...ledgerData.items])
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить кошелек продавца')
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadWallet(0)
   }, [])
+
+  const hasMoreLedger = wallet ? ledger.length < wallet.ledger_entries : false
 
   return (
     <main className="seller-wrap">
@@ -54,7 +73,12 @@ export default function SellerWalletPage() {
       </section>
 
       {loading && <section className="seller-section"><p>Загрузка кошелька...</p></section>}
-      {error && <section className="seller-alert">{error}</section>}
+      {error && (
+        <section className="seller-alert seller-alert-action">
+          <span>{error}</span>
+          <button className="seller-secondary" type="button" onClick={() => loadWallet(0)}>Повторить</button>
+        </section>
+      )}
 
       {wallet && (
         <>
@@ -91,11 +115,19 @@ export default function SellerWalletPage() {
                       <strong>{entryLabels[entry.entry_type]}</strong>
                       <span>{entry.description ?? entry.order_number ?? 'Операция marketplace'}</span>
                       <small>{entry.order_number ? `Заказ ${entry.order_number} · ` : ''}{fmtDate(entry.created_at)}</small>
+                      {entry.order_id && <Link className="seller-ledger-link" to={`/seller/orders?order_id=${entry.order_id}`}>Открыть заказ</Link>}
                     </div>
                     <span className={`seller-ledger-status seller-ledger-${entry.status}`}>{entry.status}</span>
                     <div className="seller-money">{fmtMoney(entry.amount)}</div>
                   </article>
                 ))}
+              </div>
+            )}
+            {hasMoreLedger && (
+              <div className="seller-load-more">
+                <button className="seller-secondary" type="button" onClick={() => loadWallet(ledger.length)} disabled={loadingMore}>
+                  {loadingMore ? 'Загружаем...' : 'Показать еще'}
+                </button>
               </div>
             )}
           </section>

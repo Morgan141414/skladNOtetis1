@@ -10,6 +10,7 @@ const css = `
 .cart-empty { text-align:center; padding:80px 0; }
 .cart-empty h3 { font-size:20px; font-weight:700; color:#475569; margin-bottom:8px; }
 .cart-empty p { font-size:14px; color:#94A3B8; margin-bottom:24px; }
+.cart-notice { display:flex; justify-content:space-between; align-items:center; gap:12px; border:1px solid #FCA5A5; background:#FEF2F2; color:#991B1B; border-radius:16px; padding:14px 16px; margin-bottom:18px; font-size:14px; font-weight:800; }
 .cart-grid { display:grid; grid-template-columns:1fr 320px; gap:24px; align-items:start; }
 .cart-items { display:flex; flex-direction:column; gap:10px; }
 .ci-row { background:#fff; border:1px solid #E2E8F0; border-radius:14px; padding:14px 16px; display:flex; gap:14px; align-items:center; transition:all .18s; }
@@ -33,7 +34,8 @@ const css = `
 .btn-checkout { width:100%; height:50px; border-radius:14px; background:var(--brand-grad); color:#fff; font-size:15px; font-weight:700; border:none; margin-top:16px; cursor:pointer; transition:opacity .18s; }
 .btn-checkout:hover { opacity:.9; }
 .btn-checkout:disabled { opacity:.5; }
-@media(max-width:768px) { .cart-grid{grid-template-columns:1fr} .cart-summary{position:static} }
+.cart-secondary { min-height:40px; border-radius:12px; padding:0 14px; font-weight:900; font-size:14px; border:1.5px solid #E2E8F0; background:#fff; color:#334155; display:inline-flex; align-items:center; justify-content:center; }
+@media(max-width:768px) { .cart-grid{grid-template-columns:1fr} .cart-summary{position:static} .cart-notice{align-items:flex-start; flex-direction:column} }
 `
 
 export default function CartPage() {
@@ -42,10 +44,23 @@ export default function CartPage() {
   const { show } = useToast()
   const [cart, setCart] = useState<Cart | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  async function loadCart() {
+    if (!user) { openAuth('login'); return }
+    setLoading(true)
+    setError('')
+    try {
+      setCart(await apiGetCart())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить корзину')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    if (!user) { openAuth('login'); return }
-    apiGetCart().then(setCart).catch(() => {}).finally(() => setLoading(false))
+    void loadCart()
   }, [user])
 
   async function remove(id: number) {
@@ -80,9 +95,16 @@ export default function CartPage() {
           Корзина
         </h1>
 
+        {error && (
+          <div className="cart-notice">
+            <span>{error}</span>
+            <button className="cart-secondary" type="button" onClick={loadCart}>Повторить</button>
+          </div>
+        )}
+
         {loading ? (
           <div style={{textAlign:'center',padding:'60px 0',color:'#94A3B8'}}>Загрузка...</div>
-        ) : !cart || cart.items.length === 0 ? (
+        ) : !error && (!cart || cart.items.length === 0) ? (
           <div className="cart-empty">
             <div style={{width:56,height:56,margin:'0 auto 12px',borderRadius:18,background:'#EEF2FF',color:'#5B4FE8',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
@@ -93,7 +115,7 @@ export default function CartPage() {
               Перейти в каталог
             </Link>
           </div>
-        ) : (
+        ) : !error && cart ? (
           <div className="cart-grid">
             <div className="cart-items">
               {cart.items.map(item => (
@@ -138,7 +160,7 @@ export default function CartPage() {
               </Link>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
     </>
   )

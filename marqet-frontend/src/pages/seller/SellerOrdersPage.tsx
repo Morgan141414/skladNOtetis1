@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   apiGetSupplierMarketplaceOrder,
   apiGetSupplierMarketplaceOrders,
@@ -35,6 +35,8 @@ const statusFilters: Array<{ key: string; label: string; status?: MarketplaceOrd
   { key: 'preparing', label: 'Готовятся', status: 'preparing' },
   { key: 'shipped', label: 'В пути', status: 'shipped' },
   { key: 'completed', label: 'Завершены', status: 'completed' },
+  { key: 'refund_requested', label: 'Возвраты', status: 'refund_requested' },
+  { key: 'refunded', label: 'Возвращены', status: 'refunded' },
   { key: 'cancelled', label: 'Отменены', status: 'cancelled' },
 ]
 
@@ -49,8 +51,18 @@ const paymentStatusLabels: Record<string, string> = {
   refunded: 'Возврат',
 }
 
+const mergeUniqueOrders = (current: MarketplaceOrderListItem[], next: MarketplaceOrderListItem[]) => {
+  const seen = new Set<number>()
+  return [...current, ...next].filter(order => {
+    if (seen.has(order.id)) return false
+    seen.add(order.id)
+    return true
+  })
+}
+
 export default function SellerOrdersPage() {
   const { show } = useToast()
+  const [searchParams] = useSearchParams()
   const [orders, setOrders] = useState<MarketplaceOrderListItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -63,13 +75,29 @@ export default function SellerOrdersPage() {
   const [detailLoadingId, setDetailLoadingId] = useState<number | null>(null)
 
   const selectedFilter = statusFilters.find(filter => filter.key === activeFilter) ?? statusFilters[0]
+  const requestedOrderId = Number(searchParams.get('order_id'))
 
   async function load(nextOffset = 0) {
     setError('')
     try {
       const result = await apiGetSupplierMarketplaceOrders({ status: selectedFilter.status, limit: PAGE_SIZE, offset: nextOffset })
-      setOrders(items => nextOffset === 0 ? result.items : [...items, ...result.items])
+      setOrders(items => nextOffset === 0 ? result.items : mergeUniqueOrders(items, result.items))
       setTotal(result.total)
+      if (nextOffset === 0 && Number.isFinite(requestedOrderId) && requestedOrderId > 0) {
+        const found = result.items.find(item => item.id === requestedOrderId)
+        if (found) {
+          setOpenDetailId(found.id)
+          if (!details[found.id]) {
+            const detail = await apiGetSupplierMarketplaceOrder(found.id)
+            setDetails(current => ({ ...current, [found.id]: detail }))
+          }
+        } else if (!selectedFilter.status) {
+          const detail = await apiGetSupplierMarketplaceOrder(requestedOrderId)
+          setDetails(current => ({ ...current, [requestedOrderId]: detail }))
+          setOrders(items => items.some(item => item.id === requestedOrderId) ? items : [detail, ...items])
+          setOpenDetailId(requestedOrderId)
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить заказы продавца')
     } finally {
@@ -82,7 +110,7 @@ export default function SellerOrdersPage() {
     setOffset(0)
     setOpenDetailId(null)
     void load(0)
-  }, [selectedFilter.status])
+  }, [selectedFilter.status, requestedOrderId])
 
   async function updateStatus(order: MarketplaceOrderListItem, status: SupplierMarketplaceOrderNextStatus) {
     const cancelReason = status === 'cancelled' ? window.prompt('Причина отмены заказа')?.trim() : undefined

@@ -257,8 +257,13 @@ export const apiToggleFavorite = (itemId: number): Promise<{ favorited: boolean;
 export const apiCheckFavorite = (itemId: number): Promise<{ favorited: boolean; likes_count: number }> =>
   authReq<{ favorited: boolean; likes_count: number }>(`/marketplace/catalog/${itemId}/favorite`)
 
-export const apiGetMyFavorites = (): Promise<{ items: any[]; total: number }> =>
-  authReq<{ items: any[]; total: number }>('/marketplace/my-favorites')
+export const apiGetMyFavorites = (params: { limit?: number; offset?: number } = {}): Promise<{ items: any[]; total: number }> => {
+  const q = new URLSearchParams()
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.offset != null) q.set('offset', String(params.offset))
+  const suffix = q.toString() ? `?${q}` : ''
+  return authReq<{ items: any[]; total: number }>(`/marketplace/my-favorites${suffix}`)
+}
 
 // ── WhatsApp OTP ──────────────────────────────────────────────────────────────
 

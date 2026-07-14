@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useStore } from '../store'
-import { apiGetProduct, apiBrowseCatalog, apiTrackView, apiCheckFavorite, apiToggleFavorite } from '../api'
+import { apiGetProduct, apiBrowseCatalog, apiTrackView, apiCheckFavorite, apiToggleFavorite, apiAddToCart } from '../api'
 import type { Product } from '../components/ProductCard'
 import ContactSellerModal from '../components/ContactSellerModal'
 import { useToast } from '../components/Toast'
@@ -48,6 +48,9 @@ const css = `
 .btn-phone-locked { background:#F8FAFC; color:#94A3B8; border:1.5px solid #E2E8F0; }
 .btn-msg { background:#EEF2FF; color:#5B4FE8; }
 .btn-msg:hover { background:#E0E7FF; }
+.btn-cart-detail { background:#16A34A; color:#fff; }
+.btn-cart-detail:hover { background:#15803D; }
+.btn-cart-detail:disabled { opacity:.65; cursor:wait; }
 .phone-reveal { background:#F0FDF4; border:1.5px solid #86EFAC; border-radius:14px; padding:16px; text-align:center; margin-bottom:10px; }
 .ph { font-size:22px; font-weight:800; color:#166534; letter-spacing:1px; }
 .ph-label { font-size:12px; color:#4ADE80; margin-bottom:4px; }
@@ -110,6 +113,7 @@ export default function ProductDetailPage() {
   const [favorited, setFavorited] = useState(false)
   const [likes, setLikes] = useState(0)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
+  const [cartBusy, setCartBusy] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -179,6 +183,22 @@ export default function ProductDetailPage() {
       show('Не удалось обновить избранное')
     } finally {
       setFavoriteBusy(false)
+    }
+  }
+
+  async function handleCart() {
+    if (!product) return
+    if (!user) { openAuth('login'); return }
+    if (cartBusy) return
+    setCartBusy(true)
+    try {
+      await apiAddToCart(product.id, 1)
+      window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
+      show('Добавлено в корзину')
+    } catch {
+      show('Не удалось добавить товар')
+    } finally {
+      setCartBusy(false)
     }
   }
 
@@ -313,6 +333,13 @@ export default function ProductDetailPage() {
                   )}
                 </button>
               )}
+
+              <button className="btn-contact btn-cart-detail" onClick={handleCart} disabled={cartBusy}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>
+                </svg>
+                {cartBusy ? 'Добавляем...' : 'В корзину'}
+              </button>
 
               <button className="btn-contact btn-msg" onClick={handleMsg}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
