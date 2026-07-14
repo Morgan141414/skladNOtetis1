@@ -382,6 +382,7 @@ export interface MarketplaceOrderTimelineEvent {
 export interface MarketplaceOrderDetail extends MarketplaceOrderListItem {
   buyer_name?: string | null
   buyer_phone?: string | null
+  buyer_email?: string | null
   delivery_address?: string | null
   notes?: string | null
   items: MarketplaceOrderItem[]

@@ -9197,11 +9197,13 @@ class WarehouseService:
         connection = self.database.connect()
         try:
             items = connection.execute(
-                """SELECT id, catalog_item_id, product_id, product_name, sku, unit,
-                          quantity, unit_price, line_total
-                   FROM marketplace_order_items
-                   WHERE order_id = ?
-                   ORDER BY id""",
+                """SELECT oi.id, oi.catalog_item_id, oi.product_id, oi.product_name, oi.sku, oi.unit,
+                          oi.quantity, oi.unit_price, oi.line_total,
+                          sci.image_url AS image_url
+                   FROM marketplace_order_items oi
+                   LEFT JOIN supplier_catalog_items sci ON sci.id = oi.catalog_item_id
+                   WHERE oi.order_id = ?
+                   ORDER BY oi.id""",
                 (order["id"],),
             ).fetchall()
             payment = connection.execute(
@@ -9236,7 +9238,7 @@ class WarehouseService:
                             "unit": row["unit"],
                             "unit_price": float(row["unit_price"]) if row["unit_price"] is not None else None,
                             "line_total": float(row["line_total"]) if row["line_total"] is not None else None,
-                            "image_url": None,
+                            "image_url": row["image_url"],
                         }
                         for row in items
                     ],
@@ -9262,12 +9264,45 @@ class WarehouseService:
             timeline.append(
                 {
                     "id": f"payment-{payment['id']}",
-                    "title": "Оплата подтверждена" if payment["status"] == "paid" else "Ожидается оплата",
+                    "title": "Оплата подтверждена" if payment["status"] == "paid" else "Платеж создан",
                     "description": "Статус поступает от платежного провайдера.",
                     "created_at": payment["updated_at"] or payment["created_at"],
                     "status": order["status"],
                 }
             )
+        milestones = [
+            ("paid", "paid_at", "Заказ оплачен", "Деньги зафиксированы в платежном контуре marqet.kz."),
+            ("accepted", "accepted_at", "Продавец принял заказ", "Заказ принят продавцом в работу."),
+            ("shipped", "shipped_at", "Заказ отправлен", "Заказ передан в доставку или покупателю."),
+            ("delivered", "delivered_at", "Заказ доставлен", "Покупатель получил заказ."),
+            ("completed", "completed_at", "Заказ завершен", "Средства доступны продавцу после завершения заказа."),
+            ("cancelled", "cancelled_at", "Заказ отменен", order.get("cancel_reason") or "Заказ отменен."),
+        ]
+        seen = {item["id"] for item in timeline}
+        for status, column, title, description in milestones:
+            created_at = order.get(column)
+            if created_at and status not in seen:
+                timeline.append(
+                    {
+                        "id": status,
+                        "title": title,
+                        "description": description,
+                        "created_at": created_at,
+                        "status": status,
+                    }
+                )
+                seen.add(status)
+        if order.get("status") in {"refund_requested", "refunded"} and "refund" not in seen:
+            timeline.append(
+                {
+                    "id": "refund",
+                    "title": "Запрошен возврат" if order.get("status") == "refund_requested" else "Возврат оформлен",
+                    "description": order.get("cancel_reason") or "Запрос на возврат передан в обработку.",
+                    "created_at": order.get("updated_at") or order["created_at"],
+                    "status": order.get("status"),
+                }
+            )
+        timeline.sort(key=lambda item: str(item.get("created_at") or ""))
         return timeline
 
     def _payment_method_public(self, row: dict[str, Any]) -> dict[str, Any]:

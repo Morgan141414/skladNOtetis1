@@ -4,6 +4,13 @@
 .seller-head h1 { color:#1E1B4B; font-size:30px; line-height:1.15; margin:0 0 8px; }
 .seller-head p { color:#64748B; font-size:15px; line-height:1.6; max-width:680px; }
 .seller-head-actions, .seller-actions { display:flex; gap:10px; flex-wrap:wrap; }
+.seller-orders-toolbar { padding:12px; }
+.seller-filter-tabs { display:flex; gap:8px; overflow-x:auto; scrollbar-width:thin; }
+.seller-filter-tabs button {
+  flex:0 0 auto; min-height:36px; border:1.5px solid #E2E8F0; border-radius:999px; background:#fff; color:#475569;
+  padding:0 13px; font:inherit; font-size:13px; font-weight:900; cursor:pointer;
+}
+.seller-filter-tabs button.active { background:#EEF2FF; border-color:#C7D2FE; color:#4338CA; }
 .seller-primary, .seller-secondary, .seller-danger { min-height:40px; border-radius:12px; padding:0 14px; font-weight:900; font-size:14px; border:none; display:inline-flex; align-items:center; justify-content:center; }
 .seller-primary { background:var(--brand-grad); color:#fff; }
 .seller-secondary { background:#fff; border:1.5px solid #E2E8F0; color:#334155; }
@@ -17,7 +24,9 @@
 .seller-section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
 .seller-section-head span { color:#64748B; font-size:13px; font-weight:800; }
 .seller-order-list, .seller-ledger { display:grid; gap:10px; }
+.seller-order-item { border:1px solid #E2E8F0; border-radius:14px; overflow:hidden; background:#fff; }
 .seller-order-row { display:grid; grid-template-columns:minmax(0,1.25fr) auto auto minmax(180px,auto); gap:14px; align-items:center; border:1px solid #E2E8F0; border-radius:14px; padding:14px; background:#fff; }
+.seller-order-item .seller-order-row { border:0; border-radius:0; }
 .seller-order-row strong, .seller-ledger-row strong { display:block; color:#1E1B4B; margin-bottom:4px; }
 .seller-order-row span, .seller-ledger-row span, .seller-order-row small, .seller-ledger-row small { display:block; color:#64748B; font-size:13px; line-height:1.45; }
 .seller-money { color:#1E1B4B; font-weight:900; font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -33,11 +42,26 @@
 .seller-ledger-posted { background:#DCFCE7; color:#166534; }
 .seller-ledger-pending { background:#FEF3C7; color:#92400E; }
 .seller-ledger-cancelled { background:#FEE2E2; color:#991B1B; }
+.seller-order-detail { border-top:1px solid #EEF2F7; background:#F8FAFC; padding:16px; display:grid; gap:16px; }
+.seller-order-detail h3 { margin:0 0 8px; color:#1E1B4B; font-size:14px; }
+.seller-order-detail p { margin:0 0 4px; color:#64748B; font-size:13px; line-height:1.45; }
+.seller-detail-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.seller-detail-grid > div, .seller-detail-columns > div { background:#fff; border:1px solid #E2E8F0; border-radius:12px; padding:12px; }
+.seller-detail-columns { display:grid; grid-template-columns:1.15fr .85fr; gap:12px; }
+.seller-detail-items, .seller-detail-timeline { display:grid; gap:8px; }
+.seller-detail-item { display:grid; grid-template-columns:44px minmax(0,1fr); gap:10px; align-items:center; }
+.seller-detail-item strong, .seller-detail-step strong { color:#1E1B4B; font-size:13px; display:block; }
+.seller-detail-item span, .seller-detail-step span, .seller-detail-step small { color:#64748B; font-size:12px; line-height:1.4; display:block; }
+.seller-detail-thumb { width:44px; height:44px; border-radius:10px; background:#F1F5F9; overflow:hidden; }
+.seller-detail-thumb img { width:100%; height:100%; object-fit:cover; }
+.seller-detail-step { border-bottom:1px solid #EEF2F7; padding-bottom:8px; }
+.seller-detail-step:last-child { border-bottom:0; padding-bottom:0; }
+.seller-load-more { display:flex; justify-content:center; margin-top:14px; }
 @media (max-width:900px) {
   .seller-head { display:block; }
   .seller-head-actions { margin-top:14px; }
   .seller-wallet-grid { grid-template-columns:1fr; }
-  .seller-order-row, .seller-ledger-row { grid-template-columns:1fr; align-items:start; }
+  .seller-order-row, .seller-ledger-row, .seller-detail-grid, .seller-detail-columns { grid-template-columns:1fr; align-items:start; }
 }
 @media (max-width:640px) {
   .seller-wrap { padding:24px 12px 48px; }
