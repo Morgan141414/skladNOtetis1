@@ -40,6 +40,30 @@ class DatabaseFoundationStaticTest(TestCase):
         self.assertIn("def upgrade() -> None:", merge)
         self.assertIn("def downgrade() -> None:", merge)
 
+    def test_marketplace_refund_requests_have_auditable_storage(self) -> None:
+        migration = (
+            ROOT
+            / "app"
+            / "db"
+            / "migrations"
+            / "versions"
+            / "0050_marketplace_refund_requests.py"
+        ).read_text()
+        sqlite_schema = (ROOT / "app" / "storage" / "sqlite.py").read_text()
+        service = (ROOT / "app" / "services" / "warehouse.py").read_text()
+
+        for snippet in (
+            "CREATE TABLE IF NOT EXISTS marketplace_refund_requests",
+            "actor_id TEXT NOT NULL",
+            "supplier_id BIGINT NOT NULL REFERENCES suppliers(id)",
+            "uq_marketplace_refund_requests_active_order",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS marketplace_refund_requests", sqlite_schema)
+        self.assertIn("INSERT INTO marketplace_refund_requests", service)
+        self.assertIn("status = 'refunded'", service)
+
     def test_unit_of_work_has_commit_rollback_boundary(self) -> None:
         uow = (ROOT / "app" / "db" / "uow.py").read_text()
 

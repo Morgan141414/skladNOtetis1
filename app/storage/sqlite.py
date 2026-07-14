@@ -373,6 +373,30 @@ CREATE TABLE IF NOT EXISTS marketplace_favorites (
 CREATE INDEX IF NOT EXISTS idx_mf_actor ON marketplace_favorites(actor_id);
 CREATE INDEX IF NOT EXISTS idx_mf_item ON marketplace_favorites(catalog_item_id);
 
+CREATE TABLE IF NOT EXISTS marketplace_refund_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES marketplace_orders(id) ON DELETE CASCADE,
+  payment_id INTEGER REFERENCES marketplace_payments(id) ON DELETE SET NULL,
+  actor_id TEXT NOT NULL,
+  supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+  amount TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'KZT',
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'requested',
+  reviewer_id TEXT,
+  review_reason TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mrr_order ON marketplace_refund_requests(order_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mrr_actor ON marketplace_refund_requests(actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mrr_supplier_status ON marketplace_refund_requests(supplier_id, status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mrr_active_order
+  ON marketplace_refund_requests(order_id)
+  WHERE status IN ('requested','approved','processing');
+
 CREATE INDEX IF NOT EXISTS idx_notifications_warehouse_read
   ON notifications(warehouse_id, is_read, created_at DESC, id DESC);
 

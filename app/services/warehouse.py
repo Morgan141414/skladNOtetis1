@@ -2073,9 +2073,50 @@ class WarehouseService:
             if current_status in {"cancelled", "refunded"}:
                 raise ValidationError(f"Cannot request refund for marketplace order in status {current_status}")
             if current_status == "refund_requested":
+                existing_refund = conn.execute(
+                    """SELECT id FROM marketplace_refund_requests
+                       WHERE order_id = ? AND status IN ('requested','approved','processing')
+                       ORDER BY created_at DESC, id DESC
+                       LIMIT 1""",
+                    (order_id,),
+                ).fetchone()
+                if existing_refund is None:
+                    paid_payment = conn.execute(
+                        """SELECT id, amount, currency FROM marketplace_payments
+                           WHERE order_id = ? AND status IN ('authorized','paid')
+                           ORDER BY created_at DESC, id DESC
+                           LIMIT 1""",
+                        (order_id,),
+                    ).fetchone()
+                    if paid_payment is not None:
+                        now = now_iso()
+                        insert_and_get_id(
+                            conn,
+                            """INSERT INTO marketplace_refund_requests(
+                                 order_id, payment_id, actor_id, supplier_id, amount, currency,
+                                 reason, status, created_at, updated_at
+                               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?)""",
+                            (
+                                order_id,
+                                paid_payment["id"],
+                                actor_id,
+                                order["supplier_id"],
+                                decimal_to_db(Decimal(str(paid_payment["amount"]))),
+                                paid_payment["currency"] or order["currency"] or "KZT",
+                                reason,
+                                now,
+                                now,
+                            ),
+                        )
+                        conn.execute(
+                            """UPDATE marketplace_orders
+                               SET cancel_reason = COALESCE(cancel_reason, ?), updated_at = ?
+                               WHERE id = ?""",
+                            (reason, now, order_id),
+                        )
                 return self.get_marketplace_order(actor_id, order_id)
             paid_payment = conn.execute(
-                """SELECT id FROM marketplace_payments
+                """SELECT id, amount, currency FROM marketplace_payments
                    WHERE order_id = ? AND status IN ('authorized','paid')
                    ORDER BY created_at DESC, id DESC
                    LIMIT 1""",
@@ -2084,6 +2125,24 @@ class WarehouseService:
             if paid_payment is None:
                 raise ValidationError("Only authorized or paid marketplace orders can request a refund")
             now = now_iso()
+            insert_and_get_id(
+                conn,
+                """INSERT INTO marketplace_refund_requests(
+                     order_id, payment_id, actor_id, supplier_id, amount, currency,
+                     reason, status, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?)""",
+                (
+                    order_id,
+                    paid_payment["id"],
+                    actor_id,
+                    order["supplier_id"],
+                    decimal_to_db(Decimal(str(paid_payment["amount"]))),
+                    paid_payment["currency"] or order["currency"] or "KZT",
+                    reason,
+                    now,
+                    now,
+                ),
+            )
             conn.execute(
                 """UPDATE marketplace_orders
                    SET status = 'refund_requested', cancel_reason = ?, updated_at = ?
@@ -9421,6 +9480,14 @@ class WarehouseService:
             (source_id,),
         ).fetchone()
         if existing_refund is not None:
+            connection.execute(
+                """UPDATE marketplace_refund_requests
+                   SET status = 'refunded', updated_at = ?
+                   WHERE order_id = ?
+                     AND (payment_id = ? OR payment_id IS NULL)
+                     AND status IN ('requested','approved','processing')""",
+                (now, order_id, payment_id),
+            )
             return
         amount = Decimal(str(payment["amount"]))
         pending_hold = connection.execute(
@@ -9478,6 +9545,14 @@ class WarehouseService:
                SET status = 'refunded', updated_at = ?
                WHERE id = ?""",
             (now, order_id),
+        )
+        connection.execute(
+            """UPDATE marketplace_refund_requests
+               SET status = 'refunded', updated_at = ?
+               WHERE order_id = ?
+                 AND (payment_id = ? OR payment_id IS NULL)
+                 AND status IN ('requested','approved','processing')""",
+            (now, order_id, payment_id),
         )
 
     def _optional_decimal_to_db(self, value: Decimal | int | str | None) -> str | None:
