@@ -4,7 +4,6 @@ import {
   mockLoyaltyAccount,
   mockOrderDetail,
   mockOrders,
-  mockPaymentMethods,
 } from './pages/account/accountMocks'
 
 const BASE = '/api/v1'
@@ -392,6 +391,7 @@ export interface MarketplaceOrderDetail extends MarketplaceOrderListItem {
 
 export interface PaymentMethod extends MockableResponse {
   id: string
+  provider?: string | null
   brand: 'visa' | 'mastercard' | 'kaspi' | 'halyk' | 'unknown'
   last4: string
   expiry_month?: number | null
@@ -597,6 +597,7 @@ export const apiCancelMarketplaceOrder = (
 ): Promise<MarketplaceOrderDetail> =>
   accountReq<MarketplaceOrderDetail>(`/marketplace/orders/${orderId}/cancel`, {
     method: 'POST',
+    headers: { 'Idempotency-Key': makeIdempotencyKey(`cancel-${orderId}`) },
     body: JSON.stringify({ reason }),
   })
 
@@ -606,6 +607,7 @@ export const apiRequestMarketplaceRefund = (
 ): Promise<MarketplaceOrderDetail> =>
   accountReq<MarketplaceOrderDetail>(`/marketplace/orders/${orderId}/refund-request`, {
     method: 'POST',
+    headers: { 'Idempotency-Key': makeIdempotencyKey(`refund-${orderId}`) },
     body: JSON.stringify({ reason }),
   })
 
@@ -653,14 +655,12 @@ export const apiBindPaymentMethod = (body: {
 }): Promise<PaymentMethod> =>
   accountReq<PaymentMethod>('/marketplace/payment-methods', {
     method: 'POST',
+    headers: { 'Idempotency-Key': makeIdempotencyKey('payment-method') },
     body: JSON.stringify(body),
   })
 
 export const apiGetPaymentMethods = (): Promise<PaymentMethodsResponse> =>
-  withAccountFallback(
-    () => accountReq<PaymentMethodsResponse>('/marketplace/payment-methods'),
-    mockPaymentMethods,
-  )
+  accountReq<PaymentMethodsResponse>('/marketplace/payment-methods')
 
 export const apiSetDefaultPaymentMethod = (id: string): Promise<PaymentMethod> =>
   accountReq<PaymentMethod>(`/marketplace/payment-methods/${id}/default`, { method: 'PATCH' })

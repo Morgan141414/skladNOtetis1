@@ -4,9 +4,11 @@ import {
   apiCancelMarketplaceOrder,
   apiCreateMarketplacePayment,
   apiGetOrder,
+  apiGetPaymentMethods,
   apiRequestMarketplaceRefund,
   type MarketplaceOrderDetail,
   type MarketplacePayment,
+  type PaymentMethod,
 } from '../../api'
 import { AccountIcon, AccountShell, EmptyState, MockDataNotice, OrderStatusBadge } from './accountUi'
 import { useToast } from '../../components/Toast'
@@ -51,6 +53,8 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [paying, setPaying] = useState(false)
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('')
   const [orderAction, setOrderAction] = useState<'cancel' | 'refund' | ''>('')
   const [reason, setReason] = useState('')
   const [actionSaving, setActionSaving] = useState(false)
@@ -65,15 +69,27 @@ export default function OrderDetailPage() {
       .then(setOrder)
       .catch(e => setError(e instanceof Error ? e.message : 'Не удалось загрузить заказ'))
       .finally(() => setLoading(false))
+    apiGetPaymentMethods()
+      .then(data => {
+        const active = data.items.filter(method => method.status === 'active')
+        setPaymentMethods(active)
+        const primary = active.find(method => method.is_default) ?? active[0]
+        if (primary) setSelectedPaymentMethodId(primary.id)
+      })
+      .catch(() => setPaymentMethods([]))
   }, [orderId])
 
   async function retryPayment() {
     if (!order || paying) return
     setPaying(true)
     try {
-      const payment = await apiCreateMarketplacePayment(order.id, { provider: 'manual_card' })
+      const selected = paymentMethods.find(method => method.id === selectedPaymentMethodId)
+      const payment = await apiCreateMarketplacePayment(order.id, {
+        provider: selected?.provider ?? 'manual_invoice',
+        payment_method_id: selected ? Number(selected.id) : null,
+      })
       setOrder({ ...order, latest_payment: payment, payment_status: payment.status })
-      show('Платежная попытка создана')
+      show(selected ? 'Платеж создан по сохраненному способу' : 'Платеж создан как счет для ручного подтверждения')
       if (payment.payment_url) {
         window.location.assign(payment.payment_url)
       }
@@ -155,7 +171,9 @@ export default function OrderDetailPage() {
                 <span>
                   {order.latest_payment
                     ? `${order.latest_payment.provider} · ${fmtMoney(order.latest_payment.amount)}`
-                    : 'Создайте платежную попытку, чтобы продолжить оплату после подключения провайдера.'}
+                    : paymentMethods.length > 0
+                      ? 'Выберите сохраненный токенизированный способ оплаты или создайте счет для ручного подтверждения.'
+                      : 'Сохраненных способов оплаты нет. Можно создать счет для ручного подтверждения.'}
                 </span>
               </div>
               {order.latest_payment?.payment_url ? (
@@ -166,6 +184,22 @@ export default function OrderDetailPage() {
                 </button>
               )}
             </div>
+            {!order.latest_payment && canRetryPayment(order) && paymentMethods.length > 0 && (
+              <div className="acct-row-list" style={{ marginTop: 12 }}>
+                {paymentMethods.map(method => (
+                  <button
+                    key={method.id}
+                    className={`acct-secondary ${selectedPaymentMethodId === method.id ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => setSelectedPaymentMethodId(method.id)}
+                    style={{ justifyContent: 'space-between' }}
+                  >
+                    <span>{method.brand.toUpperCase()} · {method.last4}</span>
+                    {method.is_default && <span>Основной</span>}
+                  </button>
+                ))}
+              </div>
+            )}
             <p style={{ marginTop: 12 }}>
               {escrowText(order)}
             </p>

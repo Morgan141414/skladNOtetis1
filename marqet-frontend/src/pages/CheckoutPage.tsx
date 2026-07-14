@@ -4,9 +4,11 @@ import {
   apiCheckoutMarketplaceOrders,
   apiCreateMarketplacePayment,
   apiGetCart,
+  apiGetPaymentMethods,
   type Cart,
   type MarketplaceOrderDetail,
   type MarketplacePayment,
+  type PaymentMethod,
 } from '../api'
 import { useStore } from '../store'
 import { useToast } from '../components/Toast'
@@ -38,6 +40,13 @@ const css = `
 .choice-active { border-color:#5B4FE8; background:#F8FAFF; box-shadow:0 0 0 3px rgba(91,79,232,.09); }
 .choice-title { color:#1E1B4B; font-size:14px; font-weight:900; margin-bottom:6px; }
 .choice-copy { color:#64748B; font-size:12px; line-height:1.45; }
+.payment-methods { display:grid; gap:10px; margin-top:14px; }
+.payment-method { width:100%; border:1.5px solid #E2E8F0; border-radius:14px; padding:12px 14px; background:#fff; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; text-align:left; transition:border-color .16s, box-shadow .16s, background .16s; }
+.payment-method:hover { border-color:#C7D2FE; }
+.payment-method-active { border-color:#5B4FE8; background:#F8FAFF; box-shadow:0 0 0 3px rgba(91,79,232,.09); }
+.payment-method strong { display:block; color:#1E1B4B; font-size:14px; margin-bottom:3px; }
+.payment-method span { display:block; color:#64748B; font-size:12px; line-height:1.45; }
+.payment-chip { display:inline-flex; align-items:center; justify-content:center; min-height:28px; border-radius:999px; background:#EEF2FF; color:#4338CA; padding:4px 9px; font-size:11px; font-weight:900; white-space:nowrap; }
 .checkout-note { border:1px solid #BFDBFE; background:#EFF6FF; color:#1D4ED8; border-radius:14px; padding:14px 16px; font-size:13px; line-height:1.55; }
 .summary-title { color:#1E1B4B; font-size:17px; font-weight:900; margin-bottom:14px; }
 .summary-items { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; max-height:310px; overflow:auto; padding-right:4px; }
@@ -79,8 +88,8 @@ const deliveryOptions = [
 ]
 
 const paymentOptions = [
-  { id: 'card', title: 'Банковская карта', copy: 'Создадим платежную попытку. После оплаты деньги останутся в холде до завершения заказа.' },
-  { id: 'invoice', title: 'Счет продавца', copy: 'Заказ сохранится в системе, а оплату подтвердит продавец или менеджер.' },
+  { id: 'saved_card', title: 'Сохраненный способ', copy: 'Используем токенизированную карту или платежный метод из личного кабинета.' },
+  { id: 'invoice', title: 'Счет / ручное подтверждение', copy: 'Заказ сохранится в системе, оплату подтвердит продавец или менеджер.' },
 ]
 
 type CreatedCheckout = {
@@ -93,6 +102,8 @@ export default function CheckoutPage() {
   const { show } = useToast()
   const [cart, setCart] = useState<Cart | null>(null)
   const [loading, setLoading] = useState(true)
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
+  const [methodsLoading, setMethodsLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [createdCheckout, setCreatedCheckout] = useState<CreatedCheckout[]>([])
@@ -104,14 +115,37 @@ export default function CheckoutPage() {
     comment: '',
     delivery: 'courier',
     payment: 'invoice',
+    payment_method_id: '',
   })
 
   useEffect(() => {
     if (!user) { openAuth('login'); return }
-    apiGetCart()
-      .then(setCart)
-      .catch((err) => setError(err.message || 'Не удалось загрузить корзину'))
-      .finally(() => setLoading(false))
+    setLoading(true)
+    setMethodsLoading(true)
+    Promise.allSettled([apiGetCart(), apiGetPaymentMethods()])
+      .then(([cartResult, methodsResult]) => {
+        if (cartResult.status === 'fulfilled') {
+          setCart(cartResult.value)
+        } else {
+          setError(cartResult.reason?.message || 'Не удалось загрузить корзину')
+        }
+        if (methodsResult.status === 'fulfilled') {
+          const active = methodsResult.value.items.filter(method => method.status === 'active')
+          setPaymentMethods(active)
+          const primary = active.find(method => method.is_default) ?? active[0]
+          if (primary) {
+            setForm(prev => ({
+              ...prev,
+              payment: 'saved_card',
+              payment_method_id: primary.id,
+            }))
+          }
+        }
+      })
+      .finally(() => {
+        setLoading(false)
+        setMethodsLoading(false)
+      })
   }, [user])
 
   const totalKnown = useMemo(() => cart?.items.every(item => item.unit_price != null) ?? false, [cart])
@@ -126,6 +160,10 @@ export default function CheckoutPage() {
     if (!cart?.items.length) return
     if (!form.name.trim() || !form.phone.trim() || !form.city.trim()) {
       setError('Заполните имя, телефон и город, чтобы продавец мог подтвердить заказ.')
+      return
+    }
+    if (form.payment === 'saved_card' && !form.payment_method_id) {
+      setError('Выберите сохраненный способ оплаты или переключитесь на счет.')
       return
     }
     setSubmitting(true)
@@ -147,7 +185,10 @@ export default function CheckoutPage() {
       })
       const payments = await Promise.allSettled(
         created.items.map(order => apiCreateMarketplacePayment(order.id, {
-          provider: form.payment === 'card' ? 'manual_card' : 'manual_invoice',
+          provider: form.payment === 'saved_card'
+            ? paymentMethods.find(method => method.id === form.payment_method_id)?.provider ?? 'saved_card'
+            : 'manual_invoice',
+          payment_method_id: form.payment === 'saved_card' ? Number(form.payment_method_id) : null,
         })),
       )
       setCreatedCheckout(created.items.map((order, index) => {
@@ -159,7 +200,7 @@ export default function CheckoutPage() {
       }))
       setCart({ items: [], total_items: 0, total_amount: 0 })
       window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
-      show('Заказы созданы и ожидают оплаты')
+      show(form.payment === 'saved_card' ? 'Заказы созданы, платежи ожидают подтверждения провайдера' : 'Заказы созданы и ожидают оплаты')
     } catch (err: any) {
       setError(err.message || 'Не удалось оформить заказ')
     } finally {
@@ -195,6 +236,11 @@ export default function CheckoutPage() {
                 <div className="checkout-created-item" key={order.id}>
                   <strong>{order.number} · {order.supplier_name || 'Продавец'}</strong>
                   Сумма: {fmt(order.total_amount)} · оплата: {payment?.status || order.payment_status || 'pending'}
+                  {payment?.payment_url && (
+                    <div style={{ marginTop: 8 }}>
+                      <a className="checkout-secondary" href={payment.payment_url}>Перейти к оплате</a>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -252,12 +298,50 @@ export default function CheckoutPage() {
                 <h2 className="section-title"><span>3</span> Оплата и комментарий</h2>
                 <div className="choice-grid">
                   {paymentOptions.map(option => (
-                    <button key={option.id} type="button" className={`choice ${form.payment === option.id ? 'choice-active' : ''}`} onClick={() => setField('payment', option.id)}>
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`choice ${form.payment === option.id ? 'choice-active' : ''}`}
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        payment: option.id,
+                        payment_method_id: option.id === 'saved_card' ? (prev.payment_method_id || paymentMethods[0]?.id || '') : '',
+                      }))}
+                      disabled={option.id === 'saved_card' && !methodsLoading && paymentMethods.length === 0}
+                    >
                       <div className="choice-title">{option.title}</div>
                       <div className="choice-copy">{option.copy}</div>
                     </button>
                   ))}
                 </div>
+                {form.payment === 'saved_card' && (
+                  <div className="payment-methods">
+                    {methodsLoading ? (
+                      <div className="checkout-note">Загружаем сохраненные способы оплаты...</div>
+                    ) : paymentMethods.length > 0 ? (
+                      paymentMethods.map(method => (
+                        <button
+                          key={method.id}
+                          type="button"
+                          className={`payment-method ${form.payment_method_id === method.id ? 'payment-method-active' : ''}`}
+                          onClick={() => setField('payment_method_id', method.id)}
+                        >
+                          <span>
+                            <strong>{method.brand.toUpperCase()} · {method.last4}</strong>
+                            {method.expiry_month && method.expiry_year
+                              ? `Действует до ${String(method.expiry_month).padStart(2, '0')}/${method.expiry_year}`
+                              : 'Токенизированный способ оплаты'}
+                          </span>
+                          {method.is_default && <span className="payment-chip">Основной</span>}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="checkout-note">
+                        Сохраненных способов оплаты пока нет. Добавьте токенизированный способ в личном кабинете или выберите счет.
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="field" style={{ marginTop: 14 }}>
                   <label htmlFor="buyer-comment">Комментарий к заказу</label>
                   <textarea id="buyer-comment" value={form.comment} onChange={e => setField('comment', e.target.value)} placeholder="Например: нужна доставка до пятницы, отправьте документы для юрлица." />

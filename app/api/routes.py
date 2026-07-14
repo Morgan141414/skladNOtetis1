@@ -5825,13 +5825,27 @@ def cancel_marketplace_order_endpoint(
     order_id: int,
     body: MarketplaceOrderCancelRequest,
     actor_ctx: ActorContext = Depends(get_actor_context),
+    idempotency_store: IdempotencyStore = Depends(get_idempotency_store),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Any:
     try:
-        return get_warehouse_service().cancel_marketplace_order(
-            actor_ctx.actor_id,
-            order_id,
-            reason=body.reason,
+        svc = get_warehouse_service()
+        result, _ = run_idempotent(
+            idempotency_key=idempotency_key,
+            store=idempotency_store,
+            actor_id=actor_ctx.actor_id,
+            method="POST",
+            path=f"/api/v1/marketplace/orders/{order_id}/cancel",
+            payload={"order_id": order_id, "body": body},
+            response_status=status.HTTP_200_OK,
+            resource_type="marketplace_order_cancel",
+            operation=lambda: svc.cancel_marketplace_order(
+                actor_ctx.actor_id,
+                order_id,
+                reason=body.reason,
+            ),
         )
+        return result
     except Exception as error:
         raise map_error(error) from error
 
@@ -5841,13 +5855,27 @@ def request_marketplace_order_refund_endpoint(
     order_id: int,
     body: MarketplaceOrderCancelRequest,
     actor_ctx: ActorContext = Depends(get_actor_context),
+    idempotency_store: IdempotencyStore = Depends(get_idempotency_store),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Any:
     try:
-        return get_warehouse_service().request_marketplace_order_refund(
-            actor_ctx.actor_id,
-            order_id,
-            reason=body.reason,
+        svc = get_warehouse_service()
+        result, _ = run_idempotent(
+            idempotency_key=idempotency_key,
+            store=idempotency_store,
+            actor_id=actor_ctx.actor_id,
+            method="POST",
+            path=f"/api/v1/marketplace/orders/{order_id}/refund-request",
+            payload={"order_id": order_id, "body": body},
+            response_status=status.HTTP_200_OK,
+            resource_type="marketplace_order_refund_request",
+            operation=lambda: svc.request_marketplace_order_refund(
+                actor_ctx.actor_id,
+                order_id,
+                reason=body.reason,
+            ),
         )
+        return result
     except Exception as error:
         raise map_error(error) from error
 
@@ -5866,19 +5894,33 @@ def list_marketplace_payment_methods_endpoint(
 def bind_marketplace_payment_method_endpoint(
     body: PaymentMethodBind,
     actor_ctx: ActorContext = Depends(get_actor_context),
+    idempotency_store: IdempotencyStore = Depends(get_idempotency_store),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Any:
     try:
-        return get_warehouse_service().bind_marketplace_payment_method(
-            actor_ctx.actor_id,
-            provider=body.provider,
-            provider_token=body.provider_token,
-            brand=body.brand,
-            last4=body.last4,
-            expiry_month=body.expiry_month,
-            expiry_year=body.expiry_year,
-            holder_name=body.holder_name,
-            is_default=body.is_default,
+        svc = get_warehouse_service()
+        result, _ = run_idempotent(
+            idempotency_key=idempotency_key,
+            store=idempotency_store,
+            actor_id=actor_ctx.actor_id,
+            method="POST",
+            path="/api/v1/marketplace/payment-methods",
+            payload=body,
+            response_status=status.HTTP_201_CREATED,
+            resource_type="marketplace_payment_method",
+            operation=lambda: svc.bind_marketplace_payment_method(
+                actor_ctx.actor_id,
+                provider=body.provider,
+                provider_token=body.provider_token,
+                brand=body.brand,
+                last4=body.last4,
+                expiry_month=body.expiry_month,
+                expiry_year=body.expiry_year,
+                holder_name=body.holder_name,
+                is_default=body.is_default,
+            ),
         )
+        return result
     except Exception as error:
         raise map_error(error) from error
 
@@ -5990,16 +6032,30 @@ def update_supplier_marketplace_order_status_endpoint(
     order_id: int,
     body: SupplierMarketplaceOrderStatusUpdate,
     actor_ctx: ActorContext = Depends(get_actor_context),
+    idempotency_store: IdempotencyStore = Depends(get_idempotency_store),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Any:
     if actor_ctx.supplier_id is None:
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "No supplier linked", "details": {}})
     try:
-        return get_warehouse_service().update_supplier_marketplace_order_status(
-            actor_ctx.supplier_id,
-            order_id,
-            status=body.status,
-            cancel_reason=body.cancel_reason,
+        svc = get_warehouse_service()
+        result, _ = run_idempotent(
+            idempotency_key=idempotency_key,
+            store=idempotency_store,
+            actor_id=actor_ctx.actor_id,
+            method="PATCH",
+            path=f"/api/v1/supplier/marketplace-orders/{order_id}/status",
+            payload={"order_id": order_id, "body": body},
+            response_status=status.HTTP_200_OK,
+            resource_type="supplier_marketplace_order_status",
+            operation=lambda: svc.update_supplier_marketplace_order_status(
+                actor_ctx.supplier_id,
+                order_id,
+                status=body.status,
+                cancel_reason=body.cancel_reason,
+            ),
         )
+        return result
     except Exception as error:
         raise map_error(error) from error
 
