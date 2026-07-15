@@ -3,12 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
 import {
   apiGetMyListings, apiDeleteListing, apiUpdateListing, apiExtendListing, apiPromoteListing, apiGetAdminStats,
-  apiGetCards, apiBindCard, apiSetDefaultCard, apiRemoveCard,
-  apiGetPayoutAccounts, apiBindPayoutAccount, apiSetDefaultPayoutAccount, apiRemovePayoutAccount,
+  apiGetCards, apiSetDefaultCard, apiRemoveCard,
+  apiGetPayoutAccounts, apiSetDefaultPayoutAccount, apiRemovePayoutAccount,
   apiGetPayouts,
   type AdminStats, type SavedCard, type PayoutAccount, type Payout,
 } from '../api'
 import EditListingModal from '../components/EditListingModal'
+import AddCardModal from '../components/AddCardModal'
 import { useToast } from '../components/Toast'
 
 const css = `
@@ -309,7 +310,7 @@ function CardsSection() {
   const { show } = useToast()
   const [cards, setCards] = useState<SavedCard[]>([])
   const [loading, setLoading] = useState(true)
-  const [binding, setBinding] = useState(false)
+  const [adding, setAdding] = useState(false)
 
   async function load() {
     try { setCards((await apiGetCards()).items.filter(c => c.status === 'active')) }
@@ -317,17 +318,6 @@ function CardsSection() {
     finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
-
-  async function addCard() {
-    setBinding(true)
-    try {
-      const r = await apiBindCard(`${window.location.origin}/account`)
-      if (r.redirect_url) window.location.href = r.redirect_url
-    } catch (e: any) {
-      show(e.message || 'Не удалось начать привязку карты')
-      setBinding(false)
-    }
-  }
 
   async function makeDefault(id: number) {
     await apiSetDefaultCard(id).catch(() => null)
@@ -343,14 +333,15 @@ function CardsSection() {
 
   return (
     <div className="pay-section">
+      {adding && (
+        <AddCardModal kind="method" onClose={() => setAdding(false)} onBound={() => { load(); show('Карта успешно привязана') }} />
+      )}
       <div className="pay-head">
         <h3 className="pay-title">💳 Мои карты</h3>
-        <button className="pay-add" onClick={addCard} disabled={binding}>
-          {binding ? 'Открываем банк...' : '+ Добавить карту'}
-        </button>
+        <button className="pay-add" onClick={() => setAdding(true)}>+ Добавить карту</button>
       </div>
       <p className="pay-hint">
-        Данные карты вводятся на защищённой странице банка. marqet.kz хранит только токен и маску — номер и CVV к нам не попадают.
+        Данные карты вводятся в защищённой форме платёжного шлюза. marqet.kz хранит только тип карты и последние 4 цифры — номер и CVC к нам не попадают.
       </p>
       {loading ? (
         <div className="pay-empty">Загрузка...</div>
@@ -383,7 +374,7 @@ function PayoutSection() {
   const [accounts, setAccounts] = useState<PayoutAccount[]>([])
   const [payouts, setPayouts] = useState<Payout[]>([])
   const [loading, setLoading] = useState(true)
-  const [binding, setBinding] = useState(false)
+  const [adding, setAdding] = useState(false)
 
   async function load() {
     try {
@@ -396,17 +387,6 @@ function PayoutSection() {
     } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
-
-  async function addCard() {
-    setBinding(true)
-    try {
-      const r = await apiBindPayoutAccount(`${window.location.origin}/account`)
-      if (r.redirect_url) window.location.href = r.redirect_url
-    } catch (e: any) {
-      show(e.message || 'Не удалось начать привязку карты')
-      setBinding(false)
-    }
-  }
 
   async function makeDefault(id: number) {
     await apiSetDefaultPayoutAccount(id).catch(() => null)
@@ -424,11 +404,12 @@ function PayoutSection() {
 
   return (
     <div className="pay-section">
+      {adding && (
+        <AddCardModal kind="payout" onClose={() => setAdding(false)} onBound={() => { load(); show('Карта для выплат привязана') }} />
+      )}
       <div className="pay-head">
         <h3 className="pay-title">🏦 Карта для выплат</h3>
-        <button className="pay-add" onClick={addCard} disabled={binding}>
-          {binding ? 'Открываем банк...' : '+ Добавить карту'}
-        </button>
+        <button className="pay-add" onClick={() => setAdding(true)}>+ Добавить карту</button>
       </div>
       <p className="pay-hint">
         Сюда marqet.kz перечисляет деньги за проданные товары после подтверждения сделки. Комиссия площадки удерживается автоматически.

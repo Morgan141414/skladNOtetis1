@@ -12,6 +12,7 @@ never touches this service — the buyer enters it on the gateway's own page.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import math
 import os
@@ -32,13 +33,39 @@ MIN_INSTALLMENT_AMOUNT = Decimal("6000")  # ₸ — below this installments make
 # Platform fee withheld from each seller payout.
 PLATFORM_COMMISSION_PERCENT = Decimal(os.getenv("MARQET_COMMISSION_PERCENT", "5"))
 
-# Sandbox-only fake cards. Real card data is NEVER entered on marqet.kz — the
-# buyer types it on the acquirer's page and we only ever receive a token.
-SANDBOX_TEST_CARDS = [
-    {"id": "visa", "brand": "Visa", "last4": "4242", "exp_month": 12, "exp_year": 2029},
-    {"id": "mastercard", "brand": "Mastercard", "last4": "5100", "exp_month": 8, "exp_year": 2028},
-    {"id": "declined", "brand": "Visa", "last4": "0002", "exp_month": 1, "exp_year": 2027},
-]
+# Sandbox-only test cards, mirroring the industry-standard numbers. The sandbox
+# gateway accepts NOTHING else: a real PAN typed here is rejected outright, so a
+# misconfigured sandbox can never capture somebody's actual card.
+SANDBOX_TEST_CARDS = {
+    "4242424242424242": {"brand": "Visa", "outcome": "ok"},
+    "5555555555554444": {"brand": "Mastercard", "outcome": "ok"},
+    "4000000000000002": {"brand": "Visa", "outcome": "declined"},
+    "4000000000009995": {"brand": "Visa", "outcome": "insufficient_funds"},
+}
+
+
+def luhn_valid(pan: str) -> bool:
+    digits = [int(d) for d in pan if d.isdigit()]
+    if len(digits) < 12:
+        return False
+    checksum = 0
+    for index, digit in enumerate(reversed(digits)):
+        if index % 2 == 1:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        checksum += digit
+    return checksum % 10 == 0
+
+
+def detect_brand(pan: str) -> str:
+    if pan.startswith("4"):
+        return "Visa"
+    if pan[:2] in {"51", "52", "53", "54", "55"} or pan[:4] in {"2221", "2720"}:
+        return "Mastercard"
+    if pan[:2] in {"34", "37"}:
+        return "Amex"
+    return "Card"
 
 
 def _q(value: Decimal) -> Decimal:
@@ -120,24 +147,50 @@ class SandboxProvider:
             "redirect_url": f"/api/v1/marketplace/cards/sandbox/{kind}/{method_id}",
         }
 
-    def finalize_binding(self, *, card_id: str) -> dict[str, Any]:
-        card = next((c for c in SANDBOX_TEST_CARDS if c["id"] == card_id), None)
+    def finalize_binding(
+        self, *, pan: str, exp_month: int, exp_year: int, cvc: str, holder_name: str | None = None
+    ) -> dict[str, Any]:
+        """Tokenize a card entered on the gateway form.
+
+        The PAN and CVC live only inside this call: nothing but the token, brand
+        and last4 is ever returned to (or stored by) the marketplace.
+        """
+        pan = "".join(ch for ch in (pan or "") if ch.isdigit())
+        if not luhn_valid(pan):
+            return {"status": "failed", "failure_reason": "Неверный номер карты"}
+        if not (cvc or "").isdigit() or not 3 <= len(cvc) <= 4:
+            return {"status": "failed", "failure_reason": "Неверный код безопасности"}
+        now = _dt.datetime.now(_dt.UTC)
+        if not (1 <= exp_month <= 12) or (exp_year, exp_month) < (now.year, now.month):
+            return {"status": "failed", "failure_reason": "Срок действия карты истёк"}
+
+        card = SANDBOX_TEST_CARDS.get(pan)
         if card is None:
-            raise ValidationError("Неизвестная тестовая карта")
-        if card_id == "declined":
+            # Refuse anything that is not an explicit test number.
+            return {
+                "status": "failed",
+                "failure_reason": "Тестовый шлюз принимает только тестовые карты. "
+                "Не вводите здесь настоящую карту — используйте 4242 4242 4242 4242.",
+            }
+        if card["outcome"] == "declined":
             return {"status": "failed", "failure_reason": "Банк отклонил привязку карты"}
+
+        last4 = pan[-4:]
         return {
             "status": "active",
-            "provider_token": f"sbxtok_{card['brand'].lower()}_{card['last4']}",
+            "provider_token": f"sbxtok_{card['brand'].lower()}_{last4}",
             "brand": card["brand"],
-            "last4": card["last4"],
-            "exp_month": card["exp_month"],
-            "exp_year": card["exp_year"],
+            "last4": last4,
+            "exp_month": exp_month,
+            "exp_year": exp_year,
+            "holder_name": holder_name,
         }
 
     # ── Charging a stored token (one-click) ──────────────────────────────────
     def charge_saved(self, *, payment_id: int, amount: Decimal, token: str) -> dict[str, Any]:
         if token.endswith("_0002"):
+            return {"status": "failed", "provider_ref": f"sbx_{payment_id}", "failure_reason": "Банк отклонил операцию"}
+        if token.endswith("_9995"):
             return {"status": "failed", "provider_ref": f"sbx_{payment_id}", "failure_reason": "Недостаточно средств"}
         return {"status": "paid", "provider_ref": f"sbx_{payment_id}"}
 
@@ -184,8 +237,10 @@ class HalykEpayProvider:
         # card is entered on ePay's page and only the token comes back to us.
         raise ValidationError("ePay card binding pending merchant credentials")
 
-    def finalize_binding(self, *, card_id: str) -> dict[str, Any]:
+    def finalize_binding(self, *, pan, exp_month, exp_year, cvc, holder_name=None) -> dict[str, Any]:
         self._require_config()
+        # Never reachable in practice: with ePay the PAN is typed into ePay's own
+        # hosted widget and only the token reaches us.
         raise ValidationError("ePay card binding pending merchant credentials")
 
     def charge_saved(self, *, payment_id, amount, token) -> dict[str, Any]:
@@ -202,6 +257,13 @@ def get_provider() -> PaymentProvider:
     name = os.getenv("MARQET_PAYMENT_PROVIDER", "sandbox").strip().lower()
     if name == "epay":
         return HalykEpayProvider()
+    # Safety rail: the sandbox renders its own card form. It must never run on a
+    # live deployment, where real buyers could type a real card into it.
+    if os.getenv("SKLAD_DEPLOYMENT_MODE", "demo").strip().lower() == "production":
+        raise ValidationError(
+            "Sandbox-платежи запрещены в production. Задайте MARQET_PAYMENT_PROVIDER=epay "
+            "и ключи эквайринга MARQET_EPAY_*."
+        )
     return SandboxProvider()
 
 
@@ -426,16 +488,19 @@ class PaymentService:
         method["redirect_url"] = reg.get("redirect_url")
         return method
 
-    def finalize_card_binding(self, method_id: int, card_id: str) -> dict[str, Any]:
+    def finalize_card_binding(self, method_id: int, **card: Any) -> dict[str, Any]:
         method = self.get_payment_method(method_id)
         if method["status"] == "active":
             return method
-        result = self.provider.finalize_binding(card_id=card_id)
+        result = self.provider.finalize_binding(**card)
+        if result["status"] != "active":
+            # Keep the row pending so the buyer can retry; surface the reason only.
+            return {**method, "status": "failed", "failure_reason": result.get("failure_reason")}
         with self.database.transaction() as conn:
             conn.execute(
                 """UPDATE marketplace_payment_methods
                    SET status = ?, provider_token = ?, brand = ?, last4 = ?,
-                       exp_month = ?, exp_year = ?, updated_at = ?
+                       exp_month = ?, exp_year = ?, holder_name = ?, updated_at = ?
                    WHERE id = ?""",
                 (
                     result["status"],
@@ -444,17 +509,17 @@ class PaymentService:
                     result.get("last4"),
                     result.get("exp_month"),
                     result.get("exp_year"),
+                    result.get("holder_name"),
                     now_iso(),
                     method_id,
                 ),
             )
-        if result["status"] == "active":
-            existing = self._fetch_all(
-                "SELECT id FROM marketplace_payment_methods WHERE actor_id = ? AND status = 'active'",
-                (method["actor_id"],),
-            )
-            if len(existing) == 1:  # first card becomes the default
-                self.set_default_card(method_id, method["actor_id"])
+        existing = self._fetch_all(
+            "SELECT id FROM marketplace_payment_methods WHERE actor_id = ? AND status = 'active'",
+            (method["actor_id"],),
+        )
+        if len(existing) == 1:  # first card becomes the default
+            self.set_default_card(method_id, method["actor_id"])
         return self.get_payment_method(method_id)
 
     def get_payment_method(self, method_id: int, actor_id: str | None = None) -> dict[str, Any]:
@@ -516,16 +581,18 @@ class PaymentService:
         acc["redirect_url"] = reg.get("redirect_url")
         return acc
 
-    def finalize_payout_binding(self, account_id: int, card_id: str) -> dict[str, Any]:
+    def finalize_payout_binding(self, account_id: int, **card: Any) -> dict[str, Any]:
         acc = self.get_payout_account(account_id)
         if acc["status"] == "active":
             return acc
-        result = self.provider.finalize_binding(card_id=card_id)
+        result = self.provider.finalize_binding(**card)
+        if result["status"] != "active":
+            return {**acc, "status": "failed", "failure_reason": result.get("failure_reason")}
         with self.database.transaction() as conn:
             conn.execute(
                 """UPDATE supplier_payout_accounts
                    SET status = ?, provider_token = ?, brand = ?, last4 = ?,
-                       exp_month = ?, exp_year = ?, updated_at = ?
+                       exp_month = ?, exp_year = ?, holder_name = ?, updated_at = ?
                    WHERE id = ?""",
                 (
                     result["status"],
@@ -534,17 +601,17 @@ class PaymentService:
                     result.get("last4"),
                     result.get("exp_month"),
                     result.get("exp_year"),
+                    result.get("holder_name"),
                     now_iso(),
                     account_id,
                 ),
             )
-        if result["status"] == "active":
-            existing = self._fetch_all(
-                "SELECT id FROM supplier_payout_accounts WHERE supplier_id = ? AND status = 'active'",
-                (acc["supplier_id"],),
-            )
-            if len(existing) == 1:
-                self.set_default_payout_account(account_id, acc["supplier_id"])
+        existing = self._fetch_all(
+            "SELECT id FROM supplier_payout_accounts WHERE supplier_id = ? AND status = 'active'",
+            (acc["supplier_id"],),
+        )
+        if len(existing) == 1:
+            self.set_default_payout_account(account_id, acc["supplier_id"])
         return self.get_payout_account(account_id)
 
     def get_payout_account(self, account_id: int, supplier_id: int | None = None) -> dict[str, Any]:
