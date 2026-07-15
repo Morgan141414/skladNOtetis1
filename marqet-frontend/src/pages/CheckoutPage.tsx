@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { apiCheckoutCart, apiGetCart, apiCreatePayment, apiInstallmentOptions, type Cart, type InstallmentPlan } from '../api'
+import { apiCheckoutCart, apiGetCart, apiCreatePayment, apiInstallmentOptions, apiGetCards, type Cart, type InstallmentPlan, type SavedCard } from '../api'
 import { useStore } from '../store'
 import { useToast } from '../components/Toast'
 
@@ -40,6 +40,13 @@ const css = `
 .plan-monthly { color:#5B4FE8; font-size:13px; font-weight:800; margin-top:4px; }
 .plan-tag { color:#94A3B8; font-size:11px; font-weight:700; margin-top:4px; }
 .plan-summary { margin-top:12px; background:#F8FAFF; border:1px solid #E0E7FF; border-radius:12px; padding:12px 14px; font-size:13px; color:#334155; line-height:1.5; }
+.pay-with { font-size:13px; font-weight:800; color:#334155; margin-bottom:8px; }
+.saved-card { display:flex; align-items:center; gap:10px; width:100%; text-align:left; border:1.5px solid #E2E8F0; border-radius:12px; padding:12px 14px; background:#fff; margin-bottom:8px; transition:all .16s; }
+.saved-card:hover { border-color:#C7D2FE; }
+.saved-card-active { border-color:#5B4FE8; background:#F8FAFF; box-shadow:0 0 0 3px rgba(91,79,232,.09); }
+.saved-card-radio { color:#5B4FE8; font-size:13px; }
+.saved-card-num { flex:1; font-size:14px; font-weight:700; color:#1E1B4B; }
+.saved-card-badge { background:#D1FAE5; color:#065F46; font-size:10px; font-weight:800; padding:2px 8px; border-radius:20px; }
 .summary-title { color:#1E1B4B; font-size:17px; font-weight:900; margin-bottom:14px; }
 .summary-items { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; max-height:310px; overflow:auto; padding-right:4px; }
 .summary-item { display:grid; grid-template-columns:52px minmax(0,1fr); gap:12px; align-items:center; }
@@ -94,6 +101,8 @@ export default function CheckoutPage() {
   const [paidReturn, setPaidReturn] = useState<'ok' | 'fail' | null>(null)
   const [months, setMonths] = useState(3)
   const [plans, setPlans] = useState<InstallmentPlan[]>([])
+  const [cards, setCards] = useState<SavedCard[]>([])
+  const [cardId, setCardId] = useState<number | 'new'>('new')
   const [form, setForm] = useState({
     name: user?.name ?? '',
     phone: user?.phone ?? '',
@@ -119,6 +128,14 @@ export default function CheckoutPage() {
       .then(setCart)
       .catch((err) => setError(err.message || 'Не удалось загрузить корзину'))
       .finally(() => setLoading(false))
+    apiGetCards()
+      .then(r => {
+        const active = r.items.filter(c => c.status === 'active')
+        setCards(active)
+        const def = active.find(c => c.is_default) ?? active[0]
+        if (def) setCardId(def.id)
+      })
+      .catch(() => setCards([]))
   }, [user])
 
   const totalKnown = useMemo(() => cart?.items.every(item => item.unit_price != null) ?? false, [cart])
@@ -163,6 +180,7 @@ export default function CheckoutPage() {
       const wantsOnlinePay = (form.payment === 'card' || form.payment === 'installment') && totalKnown && totalAmount > 0
 
       if (wantsOnlinePay) {
+        const useSaved = form.payment === 'card' && cardId !== 'new'
         const payment = await apiCreatePayment({
           amount: totalAmount,
           method: form.payment as 'card' | 'installment',
@@ -170,7 +188,14 @@ export default function CheckoutPage() {
           inquiry_ids: created.map(c => c.id),
           return_url: `${window.location.origin}/checkout`,
           description: `Оплата заказа marqet.kz (${created.length} поз.)`,
+          payment_method_id: useSaved ? (cardId as number) : undefined,
         })
+        if (useSaved) {
+          // One-click charge — settled server-side, no gateway redirect.
+          if (payment.status === 'paid') { setPaidReturn('ok'); return }
+          setError(`Оплата не прошла: ${payment.failure_reason ?? 'банк отклонил операцию'}`)
+          return
+        }
         if (payment.redirect_url) {
           window.location.href = payment.redirect_url  // to gateway
           return
@@ -289,6 +314,23 @@ export default function CheckoutPage() {
                     </button>
                   ))}
                 </div>
+
+                {form.payment === 'card' && cards.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="pay-with">Оплатить картой</div>
+                    {cards.map(c => (
+                      <button key={c.id} type="button" className={`saved-card ${cardId === c.id ? 'saved-card-active' : ''}`} onClick={() => setCardId(c.id)}>
+                        <span className="saved-card-radio">{cardId === c.id ? '●' : '○'}</span>
+                        <span className="saved-card-num">{c.brand ?? 'Карта'} •••• {c.last4 ?? '····'}</span>
+                        {c.is_default && <span className="saved-card-badge">основная</span>}
+                      </button>
+                    ))}
+                    <button type="button" className={`saved-card ${cardId === 'new' ? 'saved-card-active' : ''}`} onClick={() => setCardId('new')}>
+                      <span className="saved-card-radio">{cardId === 'new' ? '●' : '○'}</span>
+                      <span className="saved-card-num">Новая карта — ввести на странице банка</span>
+                    </button>
+                  </div>
+                )}
 
                 {form.payment === 'installment' && (
                   plans.length > 0 ? (
