@@ -200,57 +200,222 @@ class SandboxProvider:
 
 
 class HalykEpayProvider:
-    """Adapter skeleton for Halyk Bank ePay (KZ card acquiring + installments).
+    """Halyk Bank ePay 2.0 — real card acquiring for Kazakhstan.
 
-    Configure via env: MARQET_EPAY_TERMINAL, MARQET_EPAY_CLIENT_ID,
-    MARQET_EPAY_CLIENT_SECRET, MARQET_EPAY_BASE_URL. Left as a stub because the
-    live terminal requires a signed merchant contract that cannot be
-    self-provisioned; the create/verify contract matches ePay's OAuth + invoice
-    API so wiring real keys is the only remaining step.
+    Uses the *hosted payment widget*, not the cryptogram API: the buyer types the
+    card into Halyk's own widget, so no PAN ever reaches this server and the
+    merchant does not need PCI-DSS certification. We receive only ``cardID``.
+
+    Env:
+      MARQET_EPAY_CLIENT_ID / MARQET_EPAY_CLIENT_SECRET / MARQET_EPAY_TERMINAL
+      MARQET_EPAY_TEST=1            use Halyk's test circuit
+      MARQET_PUBLIC_BASE_URL        public https origin for backLink/postLink
+      MARQET_EPAY_VERIFY_AMOUNT     card-binding verification charge (default 100 ₸)
+
+    Written against Halyk's published API. It has never been exercised against a
+    live terminal — the first real transaction must be verified on Halyk's test
+    circuit (MARQET_EPAY_TEST=1) before going live.
     """
 
     name = "epay"
+    TIMEOUT = 20.0
 
     def __init__(self) -> None:
-        self.terminal = os.getenv("MARQET_EPAY_TERMINAL")
         self.client_id = os.getenv("MARQET_EPAY_CLIENT_ID")
         self.client_secret = os.getenv("MARQET_EPAY_CLIENT_SECRET")
-        self.base_url = os.getenv("MARQET_EPAY_BASE_URL", "https://epay-api.homebank.kz")
+        self.terminal = os.getenv("MARQET_EPAY_TERMINAL")
+        self.test_mode = os.getenv("MARQET_EPAY_TEST", "0").strip().lower() in {"1", "true", "yes"}
+        self.public_base = (os.getenv("MARQET_PUBLIC_BASE_URL") or "https://marqet.kz").rstrip("/")
+        self.verify_amount = Decimal(os.getenv("MARQET_EPAY_VERIFY_AMOUNT", "100"))
+        if self.test_mode:
+            self.oauth_url = "https://testoauth.homebank.kz/epay2/oauth2/token"
+            self.api_url = "https://testepay.homebank.kz/api"
+            self.widget_js = "https://test-epay.homebank.kz/payform/payment-api.js"
+        else:
+            self.oauth_url = "https://epay-oauth.homebank.kz/oauth2/token"
+            self.api_url = "https://epay-api.homebank.kz"
+            self.widget_js = "https://epay.homebank.kz/payform/payment-api.js"
 
+    # ── plumbing ─────────────────────────────────────────────────────────────
     def _require_config(self) -> None:
         if not (self.terminal and self.client_id and self.client_secret):
             raise ValidationError(
-                "Платёжный провайдер ePay не настроен: задайте MARQET_EPAY_* в окружении"
+                "ePay не настроен: задайте MARQET_EPAY_CLIENT_ID, MARQET_EPAY_CLIENT_SECRET "
+                "и MARQET_EPAY_TERMINAL в окружении"
             )
 
+    @staticmethod
+    def invoice_id(record_id: int, prefix: int = 0) -> str:
+        """ePay requires a 6-15 digit invoice number, unique per attempt."""
+        return f"{prefix}{record_id:06d}"[-15:].rjust(6, "0")
+
+    def oauth_token(
+        self, *, scope: str, invoice: str, amount: Decimal, currency: str = "KZT"
+    ) -> dict[str, Any]:
+        self._require_config()
+        import httpx
+
+        data = {
+            "grant_type": "client_credentials",
+            "scope": scope,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "invoiceID": invoice,
+            "amount": str(int(amount)),
+            "currency": currency,
+            "terminal": self.terminal,
+            "postLink": f"{self.public_base}/api/v1/marketplace/payments/webhook/epay",
+            "failurePostLink": f"{self.public_base}/api/v1/marketplace/payments/webhook/epay",
+        }
+        with httpx.Client(timeout=self.TIMEOUT) as client:
+            resp = client.post(self.oauth_url, data=data)
+        if resp.status_code != 200:
+            raise ValidationError(f"ePay OAuth error {resp.status_code}: {resp.text[:200]}")
+        return resp.json()
+
+    def payment_object(
+        self,
+        *,
+        invoice: str,
+        amount: Decimal,
+        description: str,
+        account_id: str,
+        return_url: str | None,
+        card_save: bool = False,
+        auth: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build the object handed to halyk.pay() inside the widget page."""
+        back = return_url or f"{self.public_base}/checkout"
+        hook = f"{self.public_base}/api/v1/marketplace/payments/webhook/epay"
+        return {
+            "invoiceId": invoice,
+            "backLink": back,
+            "failureBackLink": back,
+            "postLink": hook,
+            "failurePostLink": hook,
+            "language": "rus",
+            "description": description,
+            "accountId": account_id,
+            "terminal": self.terminal,
+            "amount": int(amount),
+            "currency": "KZT",
+            "cardSave": card_save,
+            "auth": auth or {},
+        }
+
+    # ── payments ─────────────────────────────────────────────────────────────
     def create(self, *, payment_id, amount, currency, description, return_url) -> dict[str, Any]:
         self._require_config()
-        raise ValidationError("ePay live integration pending merchant credentials")
+        invoice = self.invoice_id(payment_id)
+        # The widget page mints its own fresh token when rendered (tokens live
+        # 7200s), so nothing sensitive is persisted on the payment row.
+        return {
+            "provider_ref": invoice,
+            "redirect_url": f"/api/v1/marketplace/payments/epay/{payment_id}",
+            "status": "pending",
+        }
 
-    def verify_webhook(self, headers, raw_body) -> dict[str, Any]:
+    def verify_webhook(self, headers: dict[str, str], raw_body: bytes) -> dict[str, Any]:
+        """Handle an ePay postLink callback."""
         self._require_config()
-        raise ValidationError("ePay live integration pending merchant credentials")
-
-    def create_binding(self, *, kind, method_id, return_url) -> dict[str, Any]:
-        self._require_config()
-        # ePay: create a zero-amount/verify invoice with `saveCard=true`; the
-        # card is entered on ePay's page and only the token comes back to us.
-        raise ValidationError("ePay card binding pending merchant credentials")
-
-    def finalize_binding(self, *, pan, exp_month, exp_year, cvc, holder_name=None) -> dict[str, Any]:
-        self._require_config()
-        # Never reachable in practice: with ePay the PAN is typed into ePay's own
-        # hosted widget and only the token reaches us.
-        raise ValidationError("ePay card binding pending merchant credentials")
+        try:
+            data = json.loads(raw_body or b"{}")
+        except ValueError as error:
+            raise ValidationError("ePay callback: тело не является JSON") from error
+        invoice = data.get("invoiceId") or data.get("invoiceID")
+        if not invoice:
+            raise ValidationError("ePay callback: отсутствует invoiceId")
+        code = str(data.get("code", ""))
+        ok = data.get("status") in {"AUTH", "CHARGE", "success"} or code == "ok"
+        return {
+            "provider_ref": invoice,
+            "status": "paid" if ok else "failed",
+            "failure_reason": None if ok else (data.get("message") or "ePay отклонил платёж"),
+            "card_id": data.get("cardId") or data.get("cardID"),
+        }
 
     def charge_saved(self, *, payment_id, amount, token) -> dict[str, Any]:
+        """One-click charge of a stored cardID. No card data involved."""
         self._require_config()
-        raise ValidationError("ePay one-click charge pending merchant credentials")
+        import httpx
 
-    def create_payout(self, *, payout_id, amount, token) -> dict[str, Any]:
+        invoice = self.invoice_id(payment_id)
+        auth = self.oauth_token(scope="payment", invoice=invoice, amount=amount)
+        body = {
+            "amount": int(amount),
+            "currency": "KZT",
+            "name": "marqet.kz",
+            "cardId": {"id": token},
+            "invoiceId": invoice,
+            "description": "Оплата заказа marqet.kz",
+            "accountId": "",
+            "terminal": self.terminal,
+        }
+        with httpx.Client(timeout=self.TIMEOUT) as client:
+            resp = client.post(
+                f"{self.api_url}/payments/cards/auth",
+                json=body,
+                headers={"Authorization": f"Bearer {auth.get('access_token')}"},
+            )
+        if resp.status_code != 200:
+            return {"status": "failed", "provider_ref": invoice, "failure_reason": f"ePay {resp.status_code}"}
+        data = resp.json()
+        ok = str(data.get("code", "")) in {"ok", "0"} or data.get("status") in {"AUTH", "CHARGE"}
+        return {
+            "status": "paid" if ok else "failed",
+            "provider_ref": invoice,
+            "failure_reason": None if ok else (data.get("message") or "ePay отклонил платёж"),
+        }
+
+    # ── card binding ─────────────────────────────────────────────────────────
+    def create_binding(self, *, kind, method_id, return_url) -> dict[str, Any]:
+        """ePay stores a card during a payment (cardSave), so binding a card
+        standalone runs a small verification charge that should be refunded."""
         self._require_config()
-        # ePay OCT / card2card payout to the seller's tokenized card.
-        raise ValidationError("ePay payouts pending merchant credentials")
+        prefix = 9 if kind == "payout" else 8
+        return {
+            "provider_ref": self.invoice_id(method_id, prefix=prefix),
+            "redirect_url": f"/api/v1/marketplace/cards/epay/{kind}/{method_id}",
+        }
+
+    def finalize_binding(self, *, pan, exp_month, exp_year, cvc, holder_name=None) -> dict[str, Any]:
+        # Unreachable by design: with ePay the card is typed into Halyk's widget
+        # and the cardID arrives via postLink, never through this process.
+        raise ValidationError("ePay: карта привязывается в виджете банка, не через форму marqet.kz")
+
+    # ── payouts ──────────────────────────────────────────────────────────────
+    def create_payout(self, *, payout_id, amount, token) -> dict[str, Any]:
+        """P2P transfer to the seller's saved card (TYPECARDID)."""
+        self._require_config()
+        import httpx
+
+        invoice = self.invoice_id(payout_id, prefix=7)
+        auth = self.oauth_token(scope="transfer", invoice=invoice, amount=amount)
+        body = {
+            "order": {
+                "amount": int(amount),
+                "currency": "KZT",
+                "description": "Выплата продавцу marqet.kz",
+                "id": invoice,
+                "terminalId": self.terminal,
+            },
+            "card": {"receiver": {"cardCred": token, "transferType": "TYPECARDID"}},
+        }
+        with httpx.Client(timeout=self.TIMEOUT) as client:
+            resp = client.post(
+                f"{self.api_url}/p2p/transfer",
+                json=body,
+                headers={"Authorization": f"Bearer {auth.get('access_token')}"},
+            )
+        if resp.status_code != 200:
+            return {"status": "failed", "provider_ref": invoice, "failure_reason": f"ePay {resp.status_code}"}
+        data = resp.json()
+        ok = str(data.get("code", "")) in {"ok", "0"} or data.get("status") in {"SUCCESS", "AUTH"}
+        return {
+            "status": "sent" if ok else "failed",
+            "provider_ref": data.get("reference") or invoice,
+            "failure_reason": None if ok else (data.get("message") or "ePay отклонил выплату"),
+        }
 
 
 def get_provider() -> PaymentProvider:
@@ -451,7 +616,46 @@ class PaymentService:
         provider_ref = result.get("provider_ref")
         if not provider_ref:
             raise ValidationError("В callback отсутствует provider_ref")
+
+        # A card-binding verification charge carries the cardID we must store.
+        # Its invoice is prefixed 8 (buyer card) / 9 (seller payout card).
+        card_id = result.get("card_id")
+        if card_id and str(provider_ref)[:1] in {"8", "9"}:
+            return self._activate_from_callback(str(provider_ref), card_id, result)
+
         return self._set_status(provider_ref, result.get("status", "failed"), result.get("failure_reason"))
+
+    def _activate_from_callback(self, provider_ref: str, card_id: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Store the gateway's cardID against a pending card row (live acquirer)."""
+        is_payout = provider_ref[:1] == "9"
+        table = "supplier_payout_accounts" if is_payout else "marketplace_payment_methods"
+        row = self._fetch_one(f"SELECT * FROM {table} WHERE provider_ref = ?", (provider_ref,))
+        if row is None:
+            raise NotFoundError("Карта не найдена по provider_ref")
+        if result.get("status") != "paid":
+            with self.database.transaction() as conn:
+                conn.execute(
+                    f"UPDATE {table} SET status = 'failed', updated_at = ? WHERE id = ?",
+                    (now_iso(), row["id"]),
+                )
+            return {"id": row["id"], "status": "failed", "failure_reason": result.get("failure_reason")}
+        with self.database.transaction() as conn:
+            conn.execute(
+                f"""UPDATE {table}
+                    SET status = 'active', provider_token = ?, brand = ?, last4 = ?, updated_at = ?
+                    WHERE id = ?""",
+                (card_id, result.get("brand"), result.get("last4"), now_iso(), row["id"]),
+            )
+        owner_col, owner = ("supplier_id", row["supplier_id"]) if is_payout else ("actor_id", row["actor_id"])
+        existing = self._fetch_all(
+            f"SELECT id FROM {table} WHERE {owner_col} = ? AND status = 'active'", (owner,)
+        )
+        if len(existing) == 1:
+            if is_payout:
+                self.set_default_payout_account(row["id"], owner)
+            else:
+                self.set_default_card(row["id"], owner)
+        return {"id": row["id"], "status": "active"}
 
     # ── Buyer saved cards ────────────────────────────────────────────────────
     def _fetch_all(self, sql: str, params: tuple) -> list[dict[str, Any]]:

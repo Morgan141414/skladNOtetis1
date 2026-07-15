@@ -372,6 +372,94 @@ def sandbox_bind_confirm(
     return HTMLResponse(content=html)
 
 
+# ── Halyk ePay widget pages (live acquiring) ─────────────────────────────────
+def _epay_widget_html(widget_js: str, payment_object: dict[str, Any], title: str) -> str:
+    """Host Halyk's widget. The card is typed inside Halyk's own form."""
+    return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
+<script src="{widget_js}"></script>
+<style>body{{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:transparent;margin:0;padding:8px;color:#64748B;font-size:14px;text-align:center}}</style>
+</head><body>
+<div id="halyk-payment-widget"></div>
+<div id="fallback">Открываем защищённую форму банка...</div>
+<script>
+  var paymentObject = {json.dumps(payment_object, ensure_ascii=False)};
+  try {{
+    if (window.halyk && typeof halyk.showPaymentWidget === 'function') {{
+      halyk.showPaymentWidget(paymentObject, function (result) {{
+        var ok = result && (result.success === true || result.code === 'ok');
+        try {{ window.parent.postMessage({{type:'marqet:card-bound', status: ok ? 'active' : 'failed'}}, '*'); }} catch (e) {{}}
+        if (window.top === window.self && paymentObject.backLink) location.href = paymentObject.backLink;
+      }});
+      document.getElementById('fallback').style.display = 'none';
+    }} else if (window.halyk && typeof halyk.pay === 'function') {{
+      halyk.pay(paymentObject);
+    }} else {{
+      document.getElementById('fallback').textContent = 'Не удалось загрузить виджет банка. Обновите страницу.';
+    }}
+  }} catch (e) {{
+    document.getElementById('fallback').textContent = 'Ошибка виджета: ' + e.message;
+  }}
+</script></body></html>"""
+
+
+@payment_router.get("/marketplace/payments/epay/{payment_id}", include_in_schema=False)
+def epay_payment_page(payment_id: int) -> Any:
+    from decimal import Decimal
+
+    svc = _service()
+    provider = svc.provider
+    if provider.name != "epay":
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "ePay is not the active provider", "details": {}})
+    try:
+        payment = svc.get_payment(payment_id)
+        amount = Decimal(str(payment["total_amount"]))
+        invoice = provider.invoice_id(payment_id)
+        auth = provider.oauth_token(scope="payment", invoice=invoice, amount=amount)
+        obj = provider.payment_object(
+            invoice=invoice,
+            amount=amount,
+            description="Оплата заказа marqet.kz",
+            account_id=str(payment["actor_id"]),
+            return_url=payment.get("return_url"),
+            card_save=payment.get("payment_method_id") is None,
+            auth=auth,
+        )
+    except Exception as error:  # noqa: BLE001
+        raise _map(error) from error
+    return HTMLResponse(content=_epay_widget_html(provider.widget_js, obj, "Оплата marqet.kz"))
+
+
+@payment_router.get("/marketplace/cards/epay/{kind}/{record_id}", include_in_schema=False)
+def epay_bind_page(kind: str, record_id: int) -> Any:
+    """Bind a card via a small verification charge with cardSave=true."""
+    if kind not in ("method", "payout"):
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Unknown binding kind", "details": {}})
+    svc = _service()
+    provider = svc.provider
+    if provider.name != "epay":
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "ePay is not the active provider", "details": {}})
+    try:
+        record = (
+            svc.get_payment_method(record_id) if kind == "method" else svc.get_payout_account(record_id)
+        )
+        amount = provider.verify_amount
+        invoice = provider.invoice_id(record_id, prefix=9 if kind == "payout" else 8)
+        auth = provider.oauth_token(scope="payment", invoice=invoice, amount=amount)
+        obj = provider.payment_object(
+            invoice=invoice,
+            amount=amount,
+            description="Проверка карты marqet.kz (сумма будет возвращена)",
+            account_id=str(record.get("actor_id") or record.get("supplier_id") or ""),
+            return_url=record.get("return_url"),
+            card_save=True,
+            auth=auth,
+        )
+    except Exception as error:  # noqa: BLE001
+        raise _map(error) from error
+    return HTMLResponse(content=_epay_widget_html(provider.widget_js, obj, "Привязка карты marqet.kz"))
+
+
 @payment_router.post("/marketplace/payments/webhook/{provider}", include_in_schema=False)
 async def payment_webhook(provider: str, request: Request) -> Any:
     raw = await request.body()
