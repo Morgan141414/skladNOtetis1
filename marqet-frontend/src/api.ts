@@ -243,6 +243,46 @@ export const apiCheckoutCart = (body: { notes?: string; warehouse_id?: number | 
     }),
   })
 
+// ── Payments & installments (рассрочка) ─────────────────────────────────────
+
+export interface InstallmentPlan {
+  months: number
+  markup_percent: number
+  total: number
+  monthly: number
+  interest_free: boolean
+}
+
+export interface Payment {
+  id: number
+  amount: number
+  total_amount: number
+  markup_amount: number
+  method: string
+  installment_months: number
+  currency: string
+  provider: string
+  status: 'pending' | 'processing' | 'paid' | 'failed' | 'refunded' | 'cancelled'
+  redirect_url: string | null
+  return_url: string | null
+}
+
+export const apiInstallmentOptions = (amount: number): Promise<{ amount: number; plans: InstallmentPlan[] }> =>
+  authReq(`/marketplace/payments/installment-options?amount=${encodeURIComponent(amount)}`)
+
+export const apiCreatePayment = (body: {
+  amount: number
+  method: 'card' | 'installment' | 'wallet' | 'invoice'
+  installment_months?: number
+  inquiry_ids?: number[]
+  return_url?: string
+  description?: string
+}): Promise<Payment> =>
+  authReq<Payment>('/marketplace/payments', { method: 'POST', body: JSON.stringify(body) })
+
+export const apiGetPayment = (id: number): Promise<Payment> =>
+  authReq<Payment>(`/marketplace/payments/${id}`)
+
 // ── Favorites ────────────────────────────────────────────────────────────────
 
 export const apiToggleFavorite = (itemId: number): Promise<{ favorited: boolean; likes_count: number }> =>

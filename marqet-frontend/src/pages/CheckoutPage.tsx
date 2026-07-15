@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { apiCheckoutCart, apiGetCart, type Cart } from '../api'
+import { apiCheckoutCart, apiGetCart, apiCreatePayment, apiInstallmentOptions, type Cart, type InstallmentPlan } from '../api'
 import { useStore } from '../store'
 import { useToast } from '../components/Toast'
 
@@ -32,6 +32,14 @@ const css = `
 .choice-title { color:#1E1B4B; font-size:14px; font-weight:900; margin-bottom:6px; }
 .choice-copy { color:#64748B; font-size:12px; line-height:1.45; }
 .checkout-note { border:1px solid #BFDBFE; background:#EFF6FF; color:#1D4ED8; border-radius:14px; padding:14px 16px; font-size:13px; line-height:1.55; }
+.plan-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.plan { border:1.5px solid #E2E8F0; border-radius:14px; padding:12px 10px; background:#fff; text-align:center; transition:all .16s; }
+.plan:hover { border-color:#C7D2FE; }
+.plan-active { border-color:#5B4FE8; background:#F8FAFF; box-shadow:0 0 0 3px rgba(91,79,232,.09); }
+.plan-months { color:#1E1B4B; font-size:14px; font-weight:900; }
+.plan-monthly { color:#5B4FE8; font-size:13px; font-weight:800; margin-top:4px; }
+.plan-tag { color:#94A3B8; font-size:11px; font-weight:700; margin-top:4px; }
+.plan-summary { margin-top:12px; background:#F8FAFF; border:1px solid #E0E7FF; border-radius:12px; padding:12px 14px; font-size:13px; color:#334155; line-height:1.5; }
 .summary-title { color:#1E1B4B; font-size:17px; font-weight:900; margin-bottom:14px; }
 .summary-items { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; max-height:310px; overflow:auto; padding-right:4px; }
 .summary-item { display:grid; grid-template-columns:52px minmax(0,1fr); gap:12px; align-items:center; }
@@ -69,8 +77,9 @@ const deliveryOptions = [
 ]
 
 const paymentOptions = [
-  { id: 'invoice', title: 'Счет или оплата продавцу', copy: 'После подтверждения продавец отправит условия оплаты.' },
-  { id: 'installment', title: 'Рассрочный сценарий', copy: 'Заявка сохранит интерес к оплате частями для обработки менеджером.' },
+  { id: 'card', title: 'Оплата картой онлайн', copy: 'Visa / Mastercard. Оплата на защищённой странице банка.' },
+  { id: 'installment', title: 'Рассрочка 3–12 мес', copy: 'Разбейте платёж на равные части. 3 и 6 мес — без переплаты.' },
+  { id: 'invoice', title: 'Счёт / оплата продавцу', copy: 'После подтверждения продавец отправит условия оплаты.' },
 ]
 
 export default function CheckoutPage() {
@@ -82,6 +91,9 @@ export default function CheckoutPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [createdCount, setCreatedCount] = useState(0)
+  const [paidReturn, setPaidReturn] = useState<'ok' | 'fail' | null>(null)
+  const [months, setMonths] = useState(3)
+  const [plans, setPlans] = useState<InstallmentPlan[]>([])
   const [form, setForm] = useState({
     name: user?.name ?? '',
     phone: user?.phone ?? '',
@@ -89,8 +101,17 @@ export default function CheckoutPage() {
     address: '',
     comment: '',
     delivery: 'courier',
-    payment: 'invoice',
+    payment: 'card',
   })
+
+  useEffect(() => {
+    // Handle return from the payment gateway (?paid=1&payment_id=...)
+    const q = new URLSearchParams(window.location.search)
+    if (q.has('paid')) {
+      setPaidReturn(q.get('paid') === '1' ? 'ok' : 'fail')
+      if (q.get('paid') === '1') window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
+    }
+  }, [])
 
   useEffect(() => {
     if (!user) { openAuth('login'); return }
@@ -101,7 +122,18 @@ export default function CheckoutPage() {
   }, [user])
 
   const totalKnown = useMemo(() => cart?.items.every(item => item.unit_price != null) ?? false, [cart])
+  const totalAmount = cart?.total_amount ?? 0
   const fmt = (n: number | null | undefined) => n != null ? n.toLocaleString('ru-KZ') + ' ₸' : 'Цена по запросу'
+
+  useEffect(() => {
+    if (totalKnown && totalAmount > 0) {
+      apiInstallmentOptions(totalAmount).then(r => setPlans(r.plans)).catch(() => setPlans([]))
+    } else {
+      setPlans([])
+    }
+  }, [totalKnown, totalAmount])
+
+  const selectedPlan = plans.find(p => p.months === months) ?? null
 
   function setField(name: string, value: string) {
     setForm(prev => ({ ...prev, [name]: value }))
@@ -128,6 +160,23 @@ export default function CheckoutPage() {
 
     try {
       const created = await apiCheckoutCart({ notes, source: 'marqet' })
+      const wantsOnlinePay = (form.payment === 'card' || form.payment === 'installment') && totalKnown && totalAmount > 0
+
+      if (wantsOnlinePay) {
+        const payment = await apiCreatePayment({
+          amount: totalAmount,
+          method: form.payment as 'card' | 'installment',
+          installment_months: form.payment === 'installment' ? months : 0,
+          inquiry_ids: created.map(c => c.id),
+          return_url: `${window.location.origin}/checkout`,
+          description: `Оплата заказа marqet.kz (${created.length} поз.)`,
+        })
+        if (payment.redirect_url) {
+          window.location.href = payment.redirect_url  // to gateway
+          return
+        }
+      }
+
       setCreatedCount(created.length)
       setCart({ items: [], total_items: 0, total_amount: 0 })
       window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
@@ -158,6 +207,24 @@ export default function CheckoutPage() {
 
         {loading ? (
           <div className="checkout-loading">Загрузка корзины...</div>
+        ) : paidReturn === 'ok' ? (
+          <div className="checkout-success">
+            <h2>Оплата прошла успешно ✓</h2>
+            <p>Мы зафиксировали оплату и передали заявки продавцам. Статус заказа виден в сообщениях.</p>
+            <div className="checkout-actions">
+              <Link className="checkout-primary" to="/messages">Открыть сообщения</Link>
+              <Link className="checkout-secondary" to="/">Продолжить покупки</Link>
+            </div>
+          </div>
+        ) : paidReturn === 'fail' ? (
+          <div className="checkout-success">
+            <h2>Оплата не завершена</h2>
+            <p>Платёж отменён или не прошёл. Заявки продавцам уже созданы — можно повторить оплату из раздела сообщений или оформить заказ заново.</p>
+            <div className="checkout-actions">
+              <Link className="checkout-primary" to="/cart">Вернуться в корзину</Link>
+              <Link className="checkout-secondary" to="/">В каталог</Link>
+            </div>
+          </div>
         ) : createdCount > 0 ? (
           <div className="checkout-success">
             <h2>Заявки отправлены</h2>
@@ -222,6 +289,33 @@ export default function CheckoutPage() {
                     </button>
                   ))}
                 </div>
+
+                {form.payment === 'installment' && (
+                  plans.length > 0 ? (
+                    <div style={{ marginTop: 16 }}>
+                      <div className="plan-grid">
+                        {plans.map(plan => (
+                          <button key={plan.months} type="button" className={`plan ${months === plan.months ? 'plan-active' : ''}`} onClick={() => setMonths(plan.months)}>
+                            <div className="plan-months">{plan.months} мес</div>
+                            <div className="plan-monthly">{plan.monthly.toLocaleString('ru-KZ')} ₸/мес</div>
+                            <div className="plan-tag">{plan.interest_free ? 'без переплаты' : `+${plan.markup_percent}%`}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {selectedPlan && (
+                        <div className="plan-summary">
+                          {selectedPlan.months} платежей по <b>{selectedPlan.monthly.toLocaleString('ru-KZ')} ₸</b>
+                          {' · итого '}<b>{selectedPlan.total.toLocaleString('ru-KZ')} ₸</b>
+                          {selectedPlan.interest_free ? ' · без переплаты' : ` · переплата ${selectedPlan.markup_percent}%`}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="checkout-note" style={{ marginTop: 14 }}>
+                      Рассрочка доступна для заказов с известной суммой от 6 000 ₸. Для этого заказа используйте оплату картой или счёт.
+                    </div>
+                  )
+                )}
                 <div className="field" style={{ marginTop: 14 }}>
                   <label htmlFor="buyer-comment">Комментарий к заказу</label>
                   <textarea id="buyer-comment" value={form.comment} onChange={e => setField('comment', e.target.value)} placeholder="Например: нужна доставка до пятницы, отправьте документы для юрлица." />
@@ -251,10 +345,20 @@ export default function CheckoutPage() {
               <div className="summary-total"><span>Итого</span><span>{totalKnown ? fmt(cart.total_amount) : 'По запросу'}</span></div>
               {error && <div className="checkout-error" style={{ marginTop: 14 }}>{error}</div>}
               <div className="checkout-note" style={{ marginTop: 14 }}>
-                Это не списывает оплату автоматически. Заказ создаёт заявки продавцам и фиксирует ваши условия для обработки.
+                {form.payment === 'card'
+                  ? 'После оформления вы перейдёте на защищённую страницу оплаты картой.'
+                  : form.payment === 'installment'
+                  ? 'После оформления вы перейдёте к оплате в рассрочку. Первый платёж — на странице банка.'
+                  : 'Оплата не списывается автоматически. Заказ создаёт заявки продавцам и фиксирует ваши условия.'}
               </div>
               <button className="checkout-submit" type="submit" disabled={submitting}>
-                {submitting ? 'Отправляем...' : 'Отправить заявки продавцам'}
+                {submitting
+                  ? 'Обрабатываем...'
+                  : form.payment === 'card'
+                  ? `Оплатить${totalKnown ? ' ' + fmt(cart.total_amount) : ''}`
+                  : form.payment === 'installment'
+                  ? (selectedPlan ? `Оформить рассрочку · ${selectedPlan.monthly.toLocaleString('ru-KZ')} ₸/мес` : 'Оформить рассрочку')
+                  : 'Отправить заявки продавцам'}
               </button>
             </aside>
           </form>
