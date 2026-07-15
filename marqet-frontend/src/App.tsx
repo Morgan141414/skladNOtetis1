@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useStore } from './store'
 import { apiMe } from './api'
+import { useT } from './i18n'
 import Header from './components/Header'
 import AuthModal from './components/AuthModal'
 import NCAVerifyModal from './components/NCAVerifyModal'
@@ -44,6 +45,25 @@ function OfertaWithRefresh() {
   return <OfertaModal onSigned={handleSigned} />
 }
 
+function Footer() {
+  const t = useT()
+  return (
+    <footer className="footer">
+      <div className="footer-brand">marqet.kz</div>
+      <div style={{marginTop:6,opacity:.7}}>{t('footer.tagline')}</div>
+      <div className="footer-links">
+        <a href="mailto:info@marqet.kz">info@marqet.kz</a>
+        <a href="/">{t('footer.catalog')}</a>
+        <a href="/post">{t('footer.post')}</a>
+        <a href="/favorites">{t('footer.favorites')}</a>
+        <a href="/cart">{t('footer.cart')}</a>
+        <a href="/account">{t('footer.account')}</a>
+      </div>
+      <div style={{marginTop:12,opacity:.4,fontSize:11}}>{t('footer.rights')}</div>
+    </footer>
+  )
+}
+
 export default function App() {
   const { authOpen, ncaOpen, ofertaOpen } = useStore()
 
@@ -77,19 +97,7 @@ export default function App() {
           <Route path="/messages/:id" element={<MessagesPage />} />
           <Route path="*" element={<CatalogPage />} />
         </Routes>
-        <footer className="footer">
-          <div className="footer-brand">marqet.kz</div>
-          <div style={{marginTop:6,opacity:.7}}>ВСЁ, ЧТО НУЖНО. В ОДНОМ МЕСТЕ.</div>
-          <div className="footer-links">
-            <a href="mailto:info@marqet.kz">info@marqet.kz</a>
-            <a href="/">Каталог</a>
-            <a href="/post">Подать объявление</a>
-            <a href="/favorites">Избранное</a>
-            <a href="/cart">Корзина</a>
-            <a href="/account">Личный кабинет</a>
-          </div>
-          <div style={{marginTop:12,opacity:.4,fontSize:11}}>© 2026 marqet.kz — Маркетплейс Казахстана</div>
-        </footer>
+        <Footer />
         <SupportWidget />
         {authOpen && <AuthModal />}
         {ncaOpen && <NCAVerifyModal />}

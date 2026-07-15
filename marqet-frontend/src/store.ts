@@ -12,13 +12,17 @@ export interface User {
   oferta_signed?: boolean
 }
 
+export type Locale = 'ru' | 'kz'
+
 interface AppState {
   token: string | null
   user: User | null
+  locale: Locale
   authOpen: boolean
   authMode: 'login' | 'register'
   ncaOpen: boolean
   ofertaOpen: boolean
+  setLocale: (l: Locale) => void
   setToken: (t: string | null) => void
   setUser: (u: User | null) => void
   logout: () => void
@@ -35,10 +39,12 @@ export const useStore = create<AppState>()(
     (set) => ({
       token: null,
       user: null,
+      locale: 'ru',
       authOpen: false,
       authMode: 'login',
       ncaOpen: false,
       ofertaOpen: false,
+      setLocale: (locale) => set({ locale }),
       setToken: (token) => set({ token }),
       setUser: (user) => set({ user }),
       logout: () => set({ token: null, user: null }),
@@ -49,6 +55,6 @@ export const useStore = create<AppState>()(
       openOferta: () => set({ ofertaOpen: true }),
       closeOferta: () => set({ ofertaOpen: false }),
     }),
-    { name: 'marqet-auth', partialize: (s) => ({ token: s.token, user: s.user }) }
+    { name: 'marqet-auth', partialize: (s) => ({ token: s.token, user: s.user, locale: s.locale }) }
   )
 )
