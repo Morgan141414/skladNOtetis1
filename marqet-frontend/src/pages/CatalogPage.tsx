@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import ProductCard, { type Product } from '../components/ProductCard'
 import { apiBrowseCatalog, apiGetCategories } from '../api'
+import { useT, useLocale, formatProductCount } from '../i18n'
 
 const PAGE = 24
 
@@ -74,6 +75,8 @@ function SkeletonCard() {
 }
 
 export default function CatalogPage() {
+  const t = useT()
+  const [locale] = useLocale()
   const [params, setParams] = useSearchParams()
   const q = params.get('search') || ''
   const catParam = params.get('cat') || ''
@@ -137,48 +140,48 @@ export default function CatalogPage() {
           <div className="hero">
             <div>
               <div className="hero-eyebrow">marqet.kz marketplace</div>
-              <h1>Маркетплейс для покупок, поставок и прямых заказов по Казахстану</h1>
-              <p>Каталог товаров, проверенные продавцы, быстрые заявки, корзина и прозрачные условия покупки в одном рабочем пространстве.</p>
+              <h1>{t('catalog.heroTitle')}</h1>
+              <p>{t('catalog.heroSubtitle')}</p>
               <div className="hero-actions">
-                <a className="hero-primary" href="#catalog-results">Перейти к товарам</a>
-                <a className="hero-secondary" href="/post">Стать продавцом</a>
+                <a className="hero-primary" href="#catalog-results">{t('catalog.heroToProducts')}</a>
+                <a className="hero-secondary" href="/post">{t('catalog.heroBecomeSeller')}</a>
               </div>
             </div>
-            <div className="hero-stats" aria-label="Показатели marketplace">
-              <div className="hero-stat"><span>Активных товаров</span><strong>{loading ? '...' : total.toLocaleString('ru-KZ')}</strong></div>
-              <div className="hero-stat"><span>Категорий</span><strong>{categories.length || '—'}</strong></div>
-              <div className="hero-stat"><span>Сценарии</span><strong>B2C + B2B</strong></div>
-              <div className="hero-stat"><span>География</span><strong>Казахстан</strong></div>
+            <div className="hero-stats" aria-label={t('catalog.statsAria')}>
+              <div className="hero-stat"><span>{t('catalog.statProducts')}</span><strong>{loading ? '...' : total.toLocaleString('ru-KZ')}</strong></div>
+              <div className="hero-stat"><span>{t('catalog.statCategories')}</span><strong>{categories.length || '—'}</strong></div>
+              <div className="hero-stat"><span>{t('catalog.statScenarios')}</span><strong>B2C + B2B</strong></div>
+              <div className="hero-stat"><span>{t('catalog.statGeography')}</span><strong>{t('catalog.statCountry')}</strong></div>
             </div>
           </div>
         )}
         {!q && (
-          <div className="trust-strip" aria-label="Преимущества marqet.kz">
-            <div className="trust-item"><span className="trust-dot" /> Проверенные продавцы и профили</div>
-            <div className="trust-item"><span className="trust-dot" /> Корзина, заявки и сообщения</div>
-            <div className="trust-item"><span className="trust-dot" /> Рассрочный сценарий готов к подключению</div>
-            <div className="trust-item"><span className="trust-dot" /> Интеграция с qpartner складом</div>
+          <div className="trust-strip" aria-label={t('catalog.trustAria')}>
+            <div className="trust-item"><span className="trust-dot" /> {t('catalog.trustSellers')}</div>
+            <div className="trust-item"><span className="trust-dot" /> {t('catalog.trustCart')}</div>
+            <div className="trust-item"><span className="trust-dot" /> {t('catalog.trustInstallment')}</div>
+            <div className="trust-item"><span className="trust-dot" /> {t('catalog.trustIntegration')}</div>
           </div>
         )}
 
         <div className="cats-strip">
-          <button className={`cat-chip ${!activeCat ? 'active' : ''}`} onClick={() => selectCat('')}>Все</button>
+          <button className={`cat-chip ${!activeCat ? 'active' : ''}`} onClick={() => selectCat('')}>{t('catalog.all')}</button>
           {categories.slice(0, 20).map(c => (
             <button key={c} className={`cat-chip ${activeCat === c ? 'active' : ''}`} onClick={() => selectCat(c)}>{c}</button>
           ))}
         </div>
 
         <div className="toolbar">
-          <span className="results-count">{loading ? '...' : `${total} ${total === 1 ? 'товар' : total < 5 ? 'товара' : 'товаров'}`}</span>
+          <span className="results-count">{loading ? '...' : formatProductCount(locale, total)}</span>
           <div className="price-filter">
-            <input className="price-input" placeholder="от ₸" value={minPrice} onChange={e => setMinPrice(e.target.value)} type="number" min="0" />
+            <input className="price-input" placeholder={t('catalog.minPrice')} value={minPrice} onChange={e => setMinPrice(e.target.value)} type="number" min="0" />
             <span style={{color:'#CBD5E1'}}>—</span>
-            <input className="price-input" placeholder="до ₸" value={maxPrice} onChange={e => setMaxPrice(e.target.value)} type="number" min="0" />
+            <input className="price-input" placeholder={t('catalog.maxPrice')} value={maxPrice} onChange={e => setMaxPrice(e.target.value)} type="number" min="0" />
           </div>
           <select className="sort-sel" value={sort} onChange={e => setSort(e.target.value)}>
-            <option value="name">По названию</option>
-            <option value="price_asc">Сначала дешевле</option>
-            <option value="price_desc">Сначала дороже</option>
+            <option value="name">{t('catalog.sortName')}</option>
+            <option value="price_asc">{t('catalog.sortCheap')}</option>
+            <option value="price_desc">{t('catalog.sortExpensive')}</option>
           </select>
         </div>
 
@@ -187,15 +190,15 @@ export default function CatalogPage() {
         ) : products.length === 0 ? (
           <div className="empty">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="1.5" style={{marginBottom:12}}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <h3>Ничего не найдено</h3>
-            <p>{q ? `По запросу «${q}» нет товаров` : 'В этой категории пока нет товаров'}</p>
-            {activeCat && <button className="cat-chip" onClick={() => selectCat('')} style={{marginTop:12}}>Сбросить фильтр</button>}
+            <h3>{t('catalog.empty')}</h3>
+            <p>{q ? t('catalog.emptyQuery', { query: q }) : t('catalog.emptyCategory')}</p>
+            {activeCat && <button className="cat-chip" onClick={() => selectCat('')} style={{marginTop:12}}>{t('catalog.resetFilter')}</button>}
           </div>
         ) : (
           <>
             <div className="grid" id="catalog-results">
               {products.map(p => (
-                <ProductCard key={p.id} p={p} onContact={prod => setPhoneModal({ name: prod.supplier_name || 'Продавец', phone: prod.supplier_phone })} />
+                <ProductCard key={p.id} p={p} onContact={prod => setPhoneModal({ name: prod.supplier_name || t('catalog.seller'), phone: prod.supplier_phone })} />
               ))}
             </div>
 
@@ -223,8 +226,8 @@ export default function CatalogPage() {
         <div className="phone-modal" onClick={() => setPhoneModal(null)}>
           <div className="phone-box" onClick={e => e.stopPropagation()}>
             <h3>{phoneModal.name}</h3>
-            {phoneModal.phone ? <div className="phone-number">{phoneModal.phone}</div> : <div className="no-phone">Номер не указан</div>}
-            <button onClick={() => setPhoneModal(null)} style={{padding:'10px 28px',borderRadius:12,background:'#EEF2FF',color:'#5B4FE8',fontWeight:700,fontSize:14,border:'none',cursor:'pointer'}}>Закрыть</button>
+            {phoneModal.phone ? <div className="phone-number">{phoneModal.phone}</div> : <div className="no-phone">{t('catalog.noPhone')}</div>}
+            <button onClick={() => setPhoneModal(null)} style={{padding:'10px 28px',borderRadius:12,background:'#EEF2FF',color:'#5B4FE8',fontWeight:700,fontSize:14,border:'none',cursor:'pointer'}}>{t('common.close')}</button>
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
 import { apiGetCart } from '../api'
+import { useT, useLocale, LOCALES } from '../i18n'
 
 const Logo = () => (
   <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
@@ -55,15 +56,27 @@ const css = `
   .btn-post,.btn-icon{width:40px;padding:0;justify-content:center}
 }
 .verified-badge { display:inline-flex;align-items:center;gap:3px;background:#D1FAE5;color:#065F46;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:700;margin-left:4px; }
+.lang { display:flex; align-items:center; gap:2px; border:1.5px solid #E2E8F0; border-radius:22px; padding:2px; flex-shrink:0; }
+.lang button { padding:5px 9px; border-radius:20px; border:0; background:none; color:#64748B; font-size:12px; font-weight:800; font-family:inherit; letter-spacing:.02em; }
+.lang button.on { background:#EEF2FF; color:#5B4FE8; }
+@media(max-width:640px){ .lang button { padding:5px 6px; font-size:11px; } }
 `
 
 export default function Header({ onSearch }: { onSearch?: (q: string) => void }) {
   const { user, logout, openAuth, openNCA } = useStore()
+  const t = useT()
+  const [locale, setLocale] = useLocale()
   const [q, setQ] = useState('')
   const [dd, setDd] = useState(false)
   const [cartCount, setCartCount] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
   const nav = useNavigate()
+
+  useEffect(() => {
+    // Keep <html lang> in sync for screen readers and Google.
+    const current = LOCALES.find(l => l.id === locale)
+    if (current) document.documentElement.lang = current.htmlLang
+  }, [locale])
 
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setDd(false) }
@@ -100,22 +113,30 @@ export default function Header({ onSearch }: { onSearch?: (q: string) => void })
           <div className="search-wrap">
             <form onSubmit={search}>
               <svg className="search-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-              <input className="search-inp" placeholder="Поиск товаров..." value={q} onChange={e => setQ(e.target.value)} />
+              <input className="search-inp" placeholder={t('header.search')} value={q} onChange={e => setQ(e.target.value)} />
             </form>
           </div>
 
           <div className="hdr-right">
+            <div className="lang">
+              {LOCALES.map(l => (
+                <button key={l.id} className={locale === l.id ? 'on' : ''} onClick={() => setLocale(l.id)} lang={l.htmlLang}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+
             <button className="btn-post" onClick={() => user ? nav('/post') : openAuth('register')}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
-              <span>Подать объявление</span>
+              <span>{t('header.post')}</span>
             </button>
 
             {user && (
               <>
-                <Link to="/favorites" className="btn-icon" title="Избранное">
+                <Link to="/favorites" className="btn-icon" title={t('header.favorites')}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
                 </Link>
-                <Link to="/cart" className="btn-icon" title="Корзина">
+                <Link to="/cart" className="btn-icon" title={t('header.cart')}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
                   {cartCount > 0 && <span className="badge">{cartCount > 9 ? '9+' : cartCount}</span>}
                 </Link>
@@ -127,29 +148,29 @@ export default function Header({ onSearch }: { onSearch?: (q: string) => void })
                 <button className="user-trigger" onClick={() => setDd(d => !d)}>
                   <div className="avatar">{user.name[0]?.toUpperCase()}</div>
                   <span className="uname">{user.name}</span>
-                  {user.is_nca_verified && <span className="verified-badge">✓ ИИН</span>}
+                  {user.is_nca_verified && <span className="verified-badge">✓ {t('header.iin')}</span>}
                 </button>
                 {dd && (
                   <div className="dd">
-                    <Link to="/account/hub" onClick={() => setDd(false)}>Личный кабинет</Link>
-                    <Link to="/account/orders" onClick={() => setDd(false)}>Заказы</Link>
-                    <Link to="/account/payment-methods" onClick={() => setDd(false)}>Способы оплаты</Link>
-                    <Link to="/account/loyalty" onClick={() => setDd(false)}>Бонусы</Link>
-                    <Link to="/seller/orders" onClick={() => setDd(false)}>Заказы продавца</Link>
-                    <Link to="/seller/wallet" onClick={() => setDd(false)}>Кошелек продавца</Link>
-                    <Link to="/account/listings" onClick={() => setDd(false)}>Мои объявления</Link>
-                    <Link to="/favorites" onClick={() => setDd(false)}>Избранное</Link>
-                    <Link to="/cart" onClick={() => setDd(false)}>Корзина{cartCount > 0 ? ` (${cartCount})` : ''}</Link>
-                    <Link to="/messages" onClick={() => setDd(false)}>Сообщения</Link>
-                    {!user.is_nca_verified && <button onClick={() => { openNCA(); setDd(false) }}>Подтвердить ИИН (ЭЦП)</button>}
-                    <button className="danger" onClick={() => { logout(); setDd(false) }}>Выйти</button>
+                    <Link to="/account/hub" onClick={() => setDd(false)}>{t('header.account')}</Link>
+                    <Link to="/account/orders" onClick={() => setDd(false)}>{t('header.orders')}</Link>
+                    <Link to="/account/payment-methods" onClick={() => setDd(false)}>{t('header.paymentMethods')}</Link>
+                    <Link to="/account/loyalty" onClick={() => setDd(false)}>{t('header.loyalty')}</Link>
+                    <Link to="/seller/orders" onClick={() => setDd(false)}>{t('header.sellerOrders')}</Link>
+                    <Link to="/seller/wallet" onClick={() => setDd(false)}>{t('header.sellerWallet')}</Link>
+                    <Link to="/account/listings" onClick={() => setDd(false)}>{t('header.myListings')}</Link>
+                    <Link to="/favorites" onClick={() => setDd(false)}>{t('header.favorites')}</Link>
+                    <Link to="/cart" onClick={() => setDd(false)}>{t('header.cart')}{cartCount > 0 ? ` (${cartCount})` : ''}</Link>
+                    <Link to="/messages" onClick={() => setDd(false)}>{t('header.messages')}</Link>
+                    {!user.is_nca_verified && <button onClick={() => { openNCA(); setDd(false) }}>{t('header.verifyIin')}</button>}
+                    <button className="danger" onClick={() => { logout(); setDd(false) }}>{t('header.logout')}</button>
                   </div>
                 )}
               </div>
             ) : (
               <>
-                <button className="btn-login" onClick={() => openAuth('login')}>Войти</button>
-                <button className="btn-reg" onClick={() => openAuth('register')}>Регистрация</button>
+                <button className="btn-login" onClick={() => openAuth('login')}>{t('header.login')}</button>
+                <button className="btn-reg" onClick={() => openAuth('register')}>{t('header.register')}</button>
               </>
             )}
           </div>

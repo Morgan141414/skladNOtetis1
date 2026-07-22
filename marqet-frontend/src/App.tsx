@@ -2,6 +2,7 @@ import { BrowserRouter, Link, Navigate, Routes, Route } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useStore } from './store'
 import { apiMe } from './api'
+import { useT } from './i18n'
 import Header from './components/Header'
 import AuthModal from './components/AuthModal'
 import NCAVerifyModal from './components/NCAVerifyModal'
@@ -51,6 +52,25 @@ function OfertaWithRefresh() {
   return <OfertaModal onSigned={handleSigned} />
 }
 
+function Footer() {
+  const t = useT()
+  return (
+    <footer className="footer">
+      <div className="footer-brand">marqet.kz</div>
+      <div style={{marginTop:6,opacity:.7}}>{t('footer.tagline')}</div>
+      <div className="footer-links">
+        <a href="mailto:info@marqet.kz">info@marqet.kz</a>
+        <Link to="/">{t('footer.catalog')}</Link>
+        <Link to="/post">{t('footer.post')}</Link>
+        <Link to="/favorites">{t('footer.favorites')}</Link>
+        <Link to="/cart">{t('footer.cart')}</Link>
+        <Link to="/account/hub">{t('footer.account')}</Link>
+      </div>
+      <div style={{marginTop:12,opacity:.4,fontSize:11}}>{t('footer.rights')}</div>
+    </footer>
+  )
+}
+
 export default function App() {
   const { authOpen, ncaOpen, ofertaOpen } = useStore()
 
@@ -92,19 +112,7 @@ export default function App() {
           <Route path="/messages/:id" element={<MessagesPage />} />
           <Route path="*" element={<CatalogPage />} />
         </Routes>
-        <footer className="footer">
-          <div className="footer-brand">marqet.kz</div>
-          <div style={{marginTop:6,opacity:.7}}>ВСЁ, ЧТО НУЖНО. В ОДНОМ МЕСТЕ.</div>
-          <div className="footer-links">
-            <a href="mailto:info@marqet.kz">info@marqet.kz</a>
-            <Link to="/">Каталог</Link>
-            <Link to="/post">Подать объявление</Link>
-            <Link to="/favorites">Избранное</Link>
-            <Link to="/cart">Корзина</Link>
-            <Link to="/account/hub">Личный кабинет</Link>
-          </div>
-          <div style={{marginTop:12,opacity:.4,fontSize:11}}>© 2026 marqet.kz — Маркетплейс Казахстана</div>
-        </footer>
+        <Footer />
         <SupportWidget />
         {authOpen && <AuthModal />}
         {ncaOpen && <NCAVerifyModal />}
