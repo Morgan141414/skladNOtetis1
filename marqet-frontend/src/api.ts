@@ -282,6 +282,25 @@ export interface CatalogItemReview {
 export const apiGetCatalogItemReviews = (itemId: number): Promise<CatalogItemReview[]> =>
   authReq<CatalogItemReview[]>(`/marketplace/catalog/${itemId}/reviews`)
 
+export interface CatalogItemReviewEligibility {
+  eligible: boolean
+  reason?: string | null
+  order_id?: number | null
+  review_id?: number | null
+}
+
+export const apiGetCatalogItemReviewEligibility = (itemId: number): Promise<CatalogItemReviewEligibility> =>
+  authReq<CatalogItemReviewEligibility>(`/marketplace/catalog/${itemId}/review-eligibility`)
+
+export const apiCreateCatalogItemReview = (
+  itemId: number,
+  body: { rating: number; comment?: string | null; reviewer_name?: string | null; image_url?: string | null },
+): Promise<CatalogItemReview> =>
+  authReq<CatalogItemReview>(`/marketplace/catalog/${itemId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
 // ── WhatsApp OTP ──────────────────────────────────────────────────────────────
 
 export const apiSendPhoneOtp = (phone: string): Promise<{ sent: boolean; expires_in: number }> =>

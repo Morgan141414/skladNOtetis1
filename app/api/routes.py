@@ -5305,6 +5305,17 @@ def list_catalog_item_reviews_endpoint(
         raise map_error(error) from error
 
 
+@router.get("/marketplace/catalog/{item_id}/review-eligibility", tags=["marketplace"])
+def get_catalog_item_review_eligibility_endpoint(
+    item_id: int,
+    actor_ctx: ActorContext = Depends(get_actor_context),
+) -> Any:
+    try:
+        return get_warehouse_service().get_catalog_item_review_eligibility(item_id, actor_ctx.actor_id)
+    except Exception as error:
+        raise map_error(error) from error
+
+
 class CatalogItemReviewModerate(BaseModel):
     action: str = Field(pattern="^(approve|reject)$")
 

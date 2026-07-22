@@ -992,6 +992,9 @@ class WarehouseService:
             raise ValidationError("Review image URL must be an absolute URL or uploaded media path")
         with self.database.transaction() as connection:
             self._require(connection, "supplier_catalog_items", catalog_item_id)
+            eligibility = self._catalog_item_review_eligibility_conn(connection, catalog_item_id, reviewer_id)
+            if not eligibility["eligible"]:
+                raise ValidationError(eligibility["reason"] or "Only buyers with a completed order can review this item")
             row = connection.execute(
                 """INSERT INTO catalog_item_reviews (
                      catalog_item_id, rating, comment, reviewer_id, image_url, reviewer_name, status
@@ -1001,6 +1004,57 @@ class WarehouseService:
                 (catalog_item_id, rating, comment, reviewer_id, image_url, reviewer_name),
             ).fetchone()
             return dict(row)
+
+    def _catalog_item_review_eligibility_conn(
+        self,
+        connection: Connection,
+        catalog_item_id: int,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        completed_statuses = ("delivered", "completed")
+        order = connection.execute(
+            """SELECT mo.id, mo.status
+               FROM marketplace_orders mo
+               JOIN marketplace_order_items oi ON oi.order_id = mo.id
+               WHERE mo.actor_id = ?
+                 AND oi.catalog_item_id = ?
+                 AND mo.status IN (?, ?)
+               ORDER BY
+                 CASE mo.status WHEN 'completed' THEN 0 ELSE 1 END,
+                 mo.updated_at DESC,
+                 mo.id DESC
+               LIMIT 1""",
+            (actor_id, catalog_item_id, *completed_statuses),
+        ).fetchone()
+        if order is None:
+            return {
+                "eligible": False,
+                "reason": "Отзыв можно оставить после доставленного или завершенного заказа.",
+                "order_id": None,
+            }
+        existing = connection.execute(
+            """SELECT id FROM catalog_item_reviews
+               WHERE catalog_item_id = ? AND reviewer_id = ? AND status <> 'rejected'
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1""",
+            (catalog_item_id, actor_id),
+        ).fetchone()
+        if existing is not None:
+            return {
+                "eligible": False,
+                "reason": "Вы уже оставили отзыв по этому товару.",
+                "order_id": int(order["id"]),
+                "review_id": int(existing["id"]),
+            }
+        return {"eligible": True, "reason": None, "order_id": int(order["id"])}
+
+    def get_catalog_item_review_eligibility(self, catalog_item_id: int, actor_id: str) -> dict[str, Any]:
+        connection = self.database.connect()
+        try:
+            self._require(connection, "supplier_catalog_items", catalog_item_id)
+            return self._catalog_item_review_eligibility_conn(connection, catalog_item_id, actor_id)
+        finally:
+            self._close_connection(connection)
 
     def list_catalog_item_reviews(self, catalog_item_id: int, status: str = "approved") -> list[dict[str, Any]]:
         connection = self.database.connect()

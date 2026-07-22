@@ -5,10 +5,13 @@ import {
   apiAddToCart,
   apiBrowseCatalog,
   apiCheckFavorite,
+  apiCreateCatalogItemReview,
+  apiGetCatalogItemReviewEligibility,
   apiGetCatalogItemReviews,
   apiGetProduct,
   apiToggleFavorite,
   apiTrackView,
+  type CatalogItemReviewEligibility,
   type CatalogItemReview,
 } from '../api'
 import type { Product } from '../components/ProductCard'
@@ -88,6 +91,17 @@ const css = `
 .review-text { font-size:14px; color:#475569; line-height:1.55; white-space:pre-wrap; }
 .review-empty { border:1px dashed #CBD5E1; border-radius:12px; padding:18px; color:#64748B; font-size:14px; background:#F8FAFC; }
 .review-policy { margin-top:14px; font-size:12px; color:#94A3B8; line-height:1.45; }
+.review-form { margin-top:18px; border-top:1px solid #E2E8F0; padding-top:18px; display:grid; gap:12px; }
+.review-form-title { font-size:15px; font-weight:800; color:#1E1B4B; }
+.review-rating-buttons { display:flex; gap:8px; flex-wrap:wrap; }
+.review-rate-btn { height:36px; padding:0 12px; border-radius:10px; border:1.5px solid #E2E8F0; background:#fff; color:#64748B; font-weight:800; }
+.review-rate-btn.active { border-color:#F59E0B; background:#FFFBEB; color:#92400E; }
+.review-form textarea { width:100%; min-height:92px; border:1.5px solid #E2E8F0; border-radius:12px; padding:12px; resize:vertical; font-size:14px; color:#1E293B; outline:none; }
+.review-form textarea:focus { border-color:#5B4FE8; box-shadow:0 0 0 3px rgba(91,79,232,.1); }
+.review-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.review-submit { height:42px; border:none; border-radius:12px; padding:0 18px; background:var(--brand-grad); color:#fff; font-weight:800; }
+.review-submit:disabled { opacity:.65; cursor:wait; }
+.review-error { background:#FEF2F2; border:1px solid #FECACA; color:#991B1B; border-radius:10px; padding:10px 12px; font-size:13px; }
 .loading-detail { display:flex; align-items:center; justify-content:center; padding:120px 0; }
 .spinner2 { width:40px; height:40px; border:3px solid #E2E8F0; border-top-color:#5B4FE8; border-radius:50%; animation:spin .7s linear infinite; }
 @keyframes spin { to{transform:rotate(360deg)} }
@@ -141,6 +155,11 @@ export default function ProductDetailPage() {
   const [cartBusy, setCartBusy] = useState(false)
   const [reviews, setReviews] = useState<CatalogItemReview[]>([])
   const [reviewsLoading, setReviewsLoading] = useState(false)
+  const [reviewEligibility, setReviewEligibility] = useState<CatalogItemReviewEligibility | null>(null)
+  const [reviewRating, setReviewRating] = useState(5)
+  const [reviewComment, setReviewComment] = useState('')
+  const [reviewSaving, setReviewSaving] = useState(false)
+  const [reviewError, setReviewError] = useState('')
 
   useEffect(() => {
     if (!id) return
@@ -195,6 +214,22 @@ export default function ProductDetailPage() {
       })
     return () => { mounted = false }
   }, [product?.id])
+
+  useEffect(() => {
+    if (!product?.id || !user) {
+      setReviewEligibility(null)
+      return
+    }
+    let mounted = true
+    apiGetCatalogItemReviewEligibility(product.id)
+      .then(result => {
+        if (mounted) setReviewEligibility(result)
+      })
+      .catch(() => {
+        if (mounted) setReviewEligibility({ eligible: false, reason: 'Не удалось проверить право на отзыв.' })
+      })
+    return () => { mounted = false }
+  }, [product?.id, user])
 
   if (loading) return (
     <><style>{css}</style>
@@ -258,6 +293,46 @@ export default function ProductDetailPage() {
       }
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  async function handleReviewSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!product) return
+    if (!user) { openAuth('login'); return }
+    if (!reviewEligibility?.eligible) {
+      setReviewError(reviewEligibility?.reason || 'Отзыв можно оставить после завершенной покупки.')
+      return
+    }
+    const comment = reviewComment.trim()
+    if (comment.length < 3) {
+      setReviewError('Напишите короткий комментарий о товаре.')
+      return
+    }
+    setReviewSaving(true)
+    setReviewError('')
+    try {
+      const created = await apiCreateCatalogItemReview(product.id, {
+        rating: reviewRating,
+        comment,
+        reviewer_name: user.name,
+      })
+      setReviews(prev => [created, ...prev])
+      setReviewComment('')
+      setReviewRating(5)
+      setReviewEligibility({ eligible: false, reason: 'Вы уже оставили отзыв по этому товару.', review_id: created.id })
+      const refreshed = await apiGetProduct(product.id).catch(() => null)
+      if (refreshed) {
+        setProduct(refreshed)
+        setLikes(refreshed.likes_count ?? likes)
+      }
+      show('Отзыв опубликован')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Не удалось отправить отзыв'
+      setReviewError(message)
+      show(message, 'error')
+    } finally {
+      setReviewSaving(false)
     }
   }
 
@@ -374,7 +449,43 @@ export default function ProductDetailPage() {
               ) : (
                 <div className="review-empty">Пока нет отзывов. Первый проверенный отзыв появится здесь после покупки.</div>
               )}
-              <div className="review-policy">Публикация новых отзывов будет открыта после привязки отзыва к завершенному заказу, чтобы защищать рейтинг от накрутки.</div>
+              {user ? (
+                reviewEligibility?.eligible ? (
+                  <form className="review-form" onSubmit={handleReviewSubmit}>
+                    <div className="review-form-title">Оставить проверенный отзыв</div>
+                    <div className="review-rating-buttons" role="radiogroup" aria-label="Оценка товара">
+                      {[5, 4, 3, 2, 1].map(value => (
+                        <button
+                          className={`review-rate-btn ${reviewRating === value ? 'active' : ''}`}
+                          type="button"
+                          key={value}
+                          onClick={() => setReviewRating(value)}
+                          aria-pressed={reviewRating === value}
+                        >
+                          {value} ★
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      value={reviewComment}
+                      onChange={e => setReviewComment(e.target.value)}
+                      maxLength={1000}
+                      placeholder="Что понравилось, что стоит знать другим покупателям?"
+                    />
+                    {reviewError && <div className="review-error">{reviewError}</div>}
+                    <div className="review-actions">
+                      <span className="review-policy">Отзыв доступен только после доставленного или завершенного заказа.</span>
+                      <button className="review-submit" type="submit" disabled={reviewSaving}>
+                        {reviewSaving ? 'Публикуем...' : 'Опубликовать отзыв'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="review-policy">{reviewEligibility?.reason || 'Отзыв можно оставить после доставленного или завершенного заказа.'}</div>
+                )
+              ) : (
+                <div className="review-policy">Войдите в аккаунт, чтобы оставить отзыв после завершенной покупки.</div>
+              )}
             </section>
           </div>
 
