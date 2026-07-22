@@ -249,6 +249,121 @@ export const apiCheckoutCart = (body: { notes?: string; warehouse_id?: number | 
     }),
   })
 
+// ── Payments & installments (рассрочка) ─────────────────────────────────────
+
+export interface InstallmentPlan {
+  months: number
+  markup_percent: number
+  total: number
+  monthly: number
+  interest_free: boolean
+}
+
+export interface Payment {
+  id: number
+  amount: number
+  total_amount: number
+  markup_amount: number
+  method: string
+  installment_months: number
+  currency: string
+  provider: string
+  status: 'pending' | 'processing' | 'paid' | 'failed' | 'refunded' | 'cancelled'
+  redirect_url: string | null
+  return_url: string | null
+  failure_reason: string | null
+  payment_method_id: number | null
+}
+
+export const apiInstallmentOptions = (amount: number): Promise<{ amount: number; plans: InstallmentPlan[] }> =>
+  authReq(`/marketplace/payments/installment-options?amount=${encodeURIComponent(amount)}`)
+
+export const apiCreatePayment = (body: {
+  amount: number
+  method: 'card' | 'installment' | 'wallet' | 'invoice'
+  installment_months?: number
+  inquiry_ids?: number[]
+  return_url?: string
+  description?: string
+  payment_method_id?: number
+}): Promise<Payment> =>
+  authReq<Payment>('/marketplace/payments', { method: 'POST', body: JSON.stringify(body) })
+
+export const apiGetPayment = (id: number): Promise<Payment> =>
+  authReq<Payment>(`/marketplace/payments/${id}`)
+
+// ── Saved cards (tokenized — no card data is stored by marqet.kz) ────────────
+
+export interface SavedCard {
+  id: number
+  brand: string | null
+  last4: string | null
+  exp_month: number | null
+  exp_year: number | null
+  is_default: boolean
+  status: 'pending' | 'active' | 'expired' | 'removed' | 'failed'
+  created_at: string
+}
+
+export const apiGetCards = (): Promise<{ items: SavedCard[] }> =>
+  authReq<{ items: SavedCard[] }>('/marketplace/cards')
+
+export const apiBindCard = (return_url?: string): Promise<SavedCard & { redirect_url: string }> =>
+  authReq('/marketplace/cards/bind', { method: 'POST', body: JSON.stringify({ return_url }) })
+
+export const apiSetDefaultCard = (id: number): Promise<SavedCard> =>
+  authReq(`/marketplace/cards/${id}/default`, { method: 'PATCH' })
+
+export const apiRemoveCard = (id: number): Promise<{ removed: boolean }> =>
+  authReq(`/marketplace/cards/${id}`, { method: 'DELETE' })
+
+// ── Supplier payout accounts & payouts ──────────────────────────────────────
+
+export interface PayoutAccount {
+  id: number
+  account_type: 'card' | 'bank'
+  brand: string | null
+  last4: string | null
+  exp_month: number | null
+  exp_year: number | null
+  holder_name: string | null
+  bank_name: string | null
+  iban_last4: string | null
+  is_default: boolean
+  status: 'pending' | 'active' | 'rejected' | 'removed' | 'failed'
+  created_at: string
+}
+
+export interface Payout {
+  id: number
+  payment_id: number | null
+  amount: string
+  commission_amount: string
+  net_amount: string
+  status: 'pending' | 'processing' | 'sent' | 'failed' | 'cancelled'
+  failure_reason: string | null
+  sent_at: string | null
+  created_at: string
+}
+
+export const apiGetPayoutAccounts = (): Promise<{ items: PayoutAccount[] }> =>
+  authReq<{ items: PayoutAccount[] }>('/supplier/payout-accounts')
+
+export const apiBindPayoutAccount = (return_url?: string): Promise<PayoutAccount & { redirect_url: string }> =>
+  authReq('/supplier/payout-accounts/bind', { method: 'POST', body: JSON.stringify({ return_url }) })
+
+export const apiSetDefaultPayoutAccount = (id: number): Promise<PayoutAccount> =>
+  authReq(`/supplier/payout-accounts/${id}/default`, { method: 'PATCH' })
+
+export const apiRemovePayoutAccount = (id: number): Promise<{ removed: boolean }> =>
+  authReq(`/supplier/payout-accounts/${id}`, { method: 'DELETE' })
+
+export const apiGetPayouts = (): Promise<{ items: Payout[] }> =>
+  authReq<{ items: Payout[] }>('/supplier/payouts')
+
+export const apiCreatePayout = (payment_id: number): Promise<Payout> =>
+  authReq('/supplier/payouts', { method: 'POST', body: JSON.stringify({ payment_id }) })
+
 // ── Favorites ────────────────────────────────────────────────────────────────
 
 export const apiToggleFavorite = (itemId: number): Promise<{ favorited: boolean; likes_count: number }> =>

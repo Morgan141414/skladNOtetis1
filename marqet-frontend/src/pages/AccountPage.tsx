@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
-import { apiGetMyListings, apiDeleteListing, apiUpdateListing, apiExtendListing, apiPromoteListing, apiGetAdminStats, type AdminStats } from '../api'
+import {
+  apiGetMyListings, apiDeleteListing, apiUpdateListing, apiExtendListing, apiPromoteListing, apiGetAdminStats,
+  apiGetCards, apiSetDefaultCard, apiRemoveCard,
+  apiGetPayoutAccounts, apiSetDefaultPayoutAccount, apiRemovePayoutAccount,
+  apiGetPayouts,
+  type AdminStats, type SavedCard, type PayoutAccount, type Payout,
+} from '../api'
 import EditListingModal from '../components/EditListingModal'
+import AddCardModal from '../components/AddCardModal'
 import { useToast } from '../components/Toast'
 
 const css = `
@@ -16,6 +23,27 @@ const css = `
 .nca-verified { display:inline-flex;align-items:center;gap:5px;background:#D1FAE5;color:#065F46;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-top:6px; }
 .nca-unverified { display:inline-flex;align-items:center;gap:5px;background:#FEF3C7;color:#92400E;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-top:6px;cursor:pointer;border:none;font-family:inherit; }
 .nca-unverified:hover { background:#FDE68A; }
+.pay-section { background:#fff; border:1px solid #E2E8F0; border-radius:16px; padding:22px; margin-bottom:20px; }
+.pay-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.pay-title { font-size:16px; font-weight:900; color:#1E1B4B; }
+.pay-subtitle { font-size:13px; font-weight:800; color:#475569; margin-bottom:8px; }
+.pay-add { background:#EEF2FF; color:#5B4FE8; border:0; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit; }
+.pay-add:disabled { opacity:.55; cursor:not-allowed; }
+.pay-hint { color:#64748B; font-size:12px; line-height:1.5; margin:8px 0 14px; }
+.pay-empty { color:#94A3B8; font-size:13px; background:#F8FAFC; border:1px dashed #E2E8F0; border-radius:12px; padding:16px; text-align:center; }
+.pay-card { display:flex; align-items:center; gap:12px; border:1.5px solid #E2E8F0; border-radius:12px; padding:12px 14px; margin-bottom:8px; }
+.pay-card-icon { font-size:20px; }
+.pay-card-num { font-size:14px; font-weight:800; color:#1E1B4B; }
+.pay-card-exp { font-size:12px; color:#94A3B8; margin-top:2px; }
+.pay-badge { background:#D1FAE5; color:#065F46; font-size:11px; font-weight:800; padding:3px 9px; border-radius:20px; }
+.pay-link { background:none; border:0; color:#5B4FE8; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; }
+.pay-del { background:none; border:0; color:#CBD5E1; font-size:15px; cursor:pointer; padding:4px 6px; }
+.pay-del:hover { color:#EF4444; }
+.payout-row { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid #F1F5F9; padding:10px 2px; }
+.payout-status { font-size:11px; font-weight:800; padding:3px 9px; border-radius:20px; }
+.payout-sent { background:#D1FAE5; color:#065F46; }
+.payout-failed { background:#FEE2E2; color:#991B1B; }
+.payout-pending, .payout-processing { background:#FEF3C7; color:#92400E; }
 .stats-row { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:28px; }
 .stat-card { background:#fff; border-radius:14px; border:1px solid #E2E8F0; padding:18px; text-align:center; }
 .stat-num { font-size:28px; font-weight:900; color:#5B4FE8; }
@@ -271,6 +299,165 @@ function AdminPanel() {
   )
 }
 
+const BRAND_ICON: Record<string, string> = { visa: '💳', mastercard: '💳' }
+
+function cardLabel(c: { brand: string | null; last4: string | null }) {
+  return `${c.brand ?? 'Карта'} •••• ${c.last4 ?? '····'}`
+}
+
+/** Buyer's saved cards. Card data lives at the acquirer — we only show the mask. */
+function CardsSection() {
+  const { show } = useToast()
+  const [cards, setCards] = useState<SavedCard[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+
+  async function load() {
+    try { setCards((await apiGetCards()).items.filter(c => c.status === 'active')) }
+    catch { /* keep previous */ }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  async function makeDefault(id: number) {
+    await apiSetDefaultCard(id).catch(() => null)
+    setCards(cs => cs.map(c => ({ ...c, is_default: c.id === id })))
+    show('Карта выбрана основной')
+  }
+
+  async function remove(id: number) {
+    await apiRemoveCard(id).catch(() => null)
+    setCards(cs => cs.filter(c => c.id !== id))
+    show('Карта удалена')
+  }
+
+  return (
+    <div className="pay-section">
+      {adding && (
+        <AddCardModal kind="method" onClose={() => setAdding(false)} onBound={() => { load(); show('Карта успешно привязана') }} />
+      )}
+      <div className="pay-head">
+        <h3 className="pay-title">💳 Мои карты</h3>
+        <button className="pay-add" onClick={() => setAdding(true)}>+ Добавить карту</button>
+      </div>
+      <p className="pay-hint">
+        Данные карты вводятся в защищённой форме платёжного шлюза. marqet.kz хранит только тип карты и последние 4 цифры — номер и CVC к нам не попадают.
+      </p>
+      {loading ? (
+        <div className="pay-empty">Загрузка...</div>
+      ) : cards.length === 0 ? (
+        <div className="pay-empty">Нет привязанных карт. Добавьте карту, чтобы платить в один клик.</div>
+      ) : (
+        cards.map(c => (
+          <div className="pay-card" key={c.id}>
+            <div className="pay-card-icon">{BRAND_ICON[(c.brand ?? '').toLowerCase()] ?? '💳'}</div>
+            <div style={{ flex: 1 }}>
+              <div className="pay-card-num">{cardLabel(c)}</div>
+              <div className="pay-card-exp">
+                {c.exp_month && c.exp_year ? `до ${String(c.exp_month).padStart(2, '0')}/${c.exp_year}` : 'срок не указан'}
+              </div>
+            </div>
+            {c.is_default
+              ? <span className="pay-badge">основная</span>
+              : <button className="pay-link" onClick={() => makeDefault(c.id)}>сделать основной</button>}
+            <button className="pay-del" onClick={() => remove(c.id)} title="Удалить">✕</button>
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
+/** Seller's payout card — where marketplace proceeds are sent. */
+function PayoutSection() {
+  const { show } = useToast()
+  const [accounts, setAccounts] = useState<PayoutAccount[]>([])
+  const [payouts, setPayouts] = useState<Payout[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+
+  async function load() {
+    try {
+      const [a, p] = await Promise.all([
+        apiGetPayoutAccounts().catch(() => ({ items: [] as PayoutAccount[] })),
+        apiGetPayouts().catch(() => ({ items: [] as Payout[] })),
+      ])
+      setAccounts(a.items.filter(x => x.status === 'active'))
+      setPayouts(p.items)
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  async function makeDefault(id: number) {
+    await apiSetDefaultPayoutAccount(id).catch(() => null)
+    setAccounts(cs => cs.map(c => ({ ...c, is_default: c.id === id })))
+    show('Карта выбрана основной для выплат')
+  }
+
+  async function remove(id: number) {
+    await apiRemovePayoutAccount(id).catch(() => null)
+    setAccounts(cs => cs.filter(c => c.id !== id))
+    show('Реквизиты удалены')
+  }
+
+  const fmtMoney = (v: string) => Number(v).toLocaleString('ru-KZ') + ' ₸'
+
+  return (
+    <div className="pay-section">
+      {adding && (
+        <AddCardModal kind="payout" onClose={() => setAdding(false)} onBound={() => { load(); show('Карта для выплат привязана') }} />
+      )}
+      <div className="pay-head">
+        <h3 className="pay-title">🏦 Карта для выплат</h3>
+        <button className="pay-add" onClick={() => setAdding(true)}>+ Добавить карту</button>
+      </div>
+      <p className="pay-hint">
+        Сюда marqet.kz перечисляет деньги за проданные товары после подтверждения сделки. Комиссия площадки удерживается автоматически.
+      </p>
+      {loading ? (
+        <div className="pay-empty">Загрузка...</div>
+      ) : accounts.length === 0 ? (
+        <div className="pay-empty">Карта для выплат не добавлена — вы не сможете получить деньги за заказы.</div>
+      ) : (
+        accounts.map(c => (
+          <div className="pay-card" key={c.id}>
+            <div className="pay-card-icon">🏦</div>
+            <div style={{ flex: 1 }}>
+              <div className="pay-card-num">{cardLabel(c)}</div>
+              <div className="pay-card-exp">
+                {c.exp_month && c.exp_year ? `до ${String(c.exp_month).padStart(2, '0')}/${c.exp_year}` : 'срок не указан'}
+              </div>
+            </div>
+            {c.is_default
+              ? <span className="pay-badge">основная</span>
+              : <button className="pay-link" onClick={() => makeDefault(c.id)}>сделать основной</button>}
+            <button className="pay-del" onClick={() => remove(c.id)} title="Удалить">✕</button>
+          </div>
+        ))
+      )}
+
+      {payouts.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="pay-subtitle">История выплат</div>
+          {payouts.slice(0, 5).map(p => (
+            <div className="payout-row" key={p.id}>
+              <div>
+                <div className="pay-card-num">{fmtMoney(p.net_amount)}</div>
+                <div className="pay-card-exp">
+                  из {fmtMoney(p.amount)} · комиссия {fmtMoney(p.commission_amount)}
+                </div>
+              </div>
+              <span className={`payout-status payout-${p.status}`}>
+                {p.status === 'sent' ? 'отправлено' : p.status === 'failed' ? 'ошибка' : 'в обработке'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AccountPage() {
   const { user, logout, openNCA } = useStore()
   const nav = useNavigate()
@@ -281,6 +468,16 @@ export default function AccountPage() {
   const [editItem, setEditItem] = useState<Listing | null>(null)
 
   const isAdmin = user?.roles?.includes('admin') || user?.roles?.includes('warehouse_manager')
+  const isSupplier = user?.roles?.includes('supplier')
+
+  useEffect(() => {
+    // Returning from the card-binding gateway (?card_added=1|0)
+    const q = new URLSearchParams(window.location.search)
+    if (q.has('card_added')) {
+      show(q.get('card_added') === '1' ? 'Карта успешно привязана' : 'Не удалось привязать карту')
+      window.history.replaceState({}, '', '/account')
+    }
+  }, [])
 
   useEffect(() => {
     if (!user) { nav('/'); return }
@@ -355,6 +552,9 @@ export default function AccountPage() {
         </div>
 
         {isAdmin && <AdminPanel />}
+
+        <CardsSection />
+        {isSupplier && <PayoutSection />}
 
         <div className="stats-row">
           <div className="stat-card"><div className="stat-num">{active.length}</div><div className="stat-label">Активных</div></div>

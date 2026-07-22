@@ -5,7 +5,9 @@ import {
   apiCreateMarketplacePayment,
   apiGetCart,
   apiGetPaymentMethods,
+  apiInstallmentOptions,
   type Cart,
+  type InstallmentPlan,
   type MarketplaceOrderDetail,
   type MarketplacePayment,
   type PaymentMethod,
@@ -47,6 +49,14 @@ const css = `
 .payment-method strong { display:block; color:#1E1B4B; font-size:14px; margin-bottom:3px; }
 .payment-method span { display:block; color:#64748B; font-size:12px; line-height:1.45; }
 .payment-chip { display:inline-flex; align-items:center; justify-content:center; min-height:28px; border-radius:999px; background:#EEF2FF; color:#4338CA; padding:4px 9px; font-size:11px; font-weight:900; white-space:nowrap; }
+.plan-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:16px; }
+.plan { border:1.5px solid #E2E8F0; border-radius:14px; padding:12px 10px; background:#fff; text-align:center; transition:all .16s; }
+.plan:hover { border-color:#C7D2FE; }
+.plan-active { border-color:#5B4FE8; background:#F8FAFF; box-shadow:0 0 0 3px rgba(91,79,232,.09); }
+.plan-months { color:#1E1B4B; font-size:14px; font-weight:900; }
+.plan-monthly { color:#5B4FE8; font-size:13px; font-weight:800; margin-top:4px; }
+.plan-tag { color:#94A3B8; font-size:11px; font-weight:700; margin-top:4px; }
+.plan-summary { margin-top:12px; background:#F8FAFF; border:1px solid #E0E7FF; border-radius:12px; padding:12px 14px; font-size:13px; color:#334155; line-height:1.5; }
 .checkout-note { border:1px solid #BFDBFE; background:#EFF6FF; color:#1D4ED8; border-radius:14px; padding:14px 16px; font-size:13px; line-height:1.55; }
 .summary-title { color:#1E1B4B; font-size:17px; font-weight:900; margin-bottom:14px; }
 .summary-items { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; max-height:310px; overflow:auto; padding-right:4px; }
@@ -84,7 +94,7 @@ const css = `
   .checkout-wrap { padding:22px 14px 54px; }
   .checkout-title { font-size:24px; }
   .checkout-panel, .checkout-summary { padding:18px; border-radius:14px; }
-  .field-grid, .choice-grid { grid-template-columns:1fr; }
+  .field-grid, .choice-grid, .plan-grid { grid-template-columns:1fr; }
 }
 `
 
@@ -95,6 +105,7 @@ const deliveryOptions = [
 
 const paymentOptions = [
   { id: 'saved_card', title: 'Сохраненный способ', copy: 'Создадим платежную заявку по токенизированному способу. Если провайдер вернет ссылку, покажем подтверждение.' },
+  { id: 'installment', title: 'Рассрочка 3-12 мес', copy: 'Зафиксируем выбранный срок рассрочки в заказе и платежной заявке.' },
   { id: 'invoice', title: 'Счет / ручное подтверждение', copy: 'Заказ сохранится в системе, оплату подтвердит продавец или менеджер.' },
 ]
 
@@ -142,7 +153,9 @@ function describePayment(payment: MarketplacePayment | undefined, fallbackStatus
   if (payment.status === 'pending' && !payment.payment_url) {
     return {
       label: 'Платежная заявка создана',
-      copy: 'Провайдер пока не вернул ссылку на подтверждение. Откройте заказ позже или выберите счет для ручного подтверждения.',
+      copy: payment.provider === 'installment'
+        ? 'Рассрочка зафиксирована в заказе. Провайдер или менеджер должен подтвердить платежный сценарий.'
+        : 'Провайдер пока не вернул ссылку на подтверждение. Откройте заказ позже или выберите счет для ручного подтверждения.',
       tone: 'warn',
     }
   }
@@ -205,6 +218,9 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(true)
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [methodsLoading, setMethodsLoading] = useState(false)
+  const [plans, setPlans] = useState<InstallmentPlan[]>([])
+  const [plansLoading, setPlansLoading] = useState(false)
+  const [months, setMonths] = useState(3)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [createdCheckout, setCreatedCheckout] = useState<CreatedCheckout[]>([])
@@ -238,7 +254,7 @@ export default function CheckoutPage() {
             setForm(prev => ({
               ...prev,
               payment: 'saved_card',
-              payment_method_id: primary.id,
+              payment_method_id: String(primary.id),
             }))
           }
         }
@@ -250,10 +266,37 @@ export default function CheckoutPage() {
   }, [user])
 
   const totalKnown = useMemo(() => cart?.items.every(item => item.unit_price != null) ?? false, [cart])
+  const totalAmount = cart?.total_amount ?? 0
   const fmt = (n: number | null | undefined) => n != null ? n.toLocaleString('ru-KZ') + ' ₸' : 'Цена по запросу'
+
+  useEffect(() => {
+    if (!totalKnown || totalAmount <= 0) {
+      setPlans([])
+      return
+    }
+    setPlansLoading(true)
+    apiInstallmentOptions(totalAmount)
+      .then(result => {
+        setPlans(result.plans)
+        const first = result.plans[0]
+        if (first) setMonths(first.months)
+      })
+      .catch(() => setPlans([]))
+      .finally(() => setPlansLoading(false))
+  }, [totalKnown, totalAmount])
+
+  const selectedPlan = plans.find(plan => plan.months === months) ?? null
 
   function setField(name: string, value: string) {
     setForm(prev => ({ ...prev, [name]: value }))
+  }
+
+  function selectPayment(payment: string) {
+    setForm(prev => ({
+      ...prev,
+      payment,
+      payment_method_id: payment === 'saved_card' ? (prev.payment_method_id || String(paymentMethods[0]?.id || '')) : '',
+    }))
   }
 
   async function submit(e: FormEvent) {
@@ -267,12 +310,17 @@ export default function CheckoutPage() {
       setError('Выберите сохраненный способ оплаты или переключитесь на счет.')
       return
     }
+    if (form.payment === 'installment' && !selectedPlan) {
+      setError('Рассрочка недоступна для текущей суммы. Выберите сохраненный способ оплаты или счет.')
+      return
+    }
     setSubmitting(true)
     setError(null)
     const deliveryAddress = [form.city.trim(), form.address.trim()].filter(Boolean).join(', ')
     const notes = [
       `Доставка: ${deliveryOptions.find(x => x.id === form.delivery)?.title}`,
       `Оплата: ${paymentOptions.find(x => x.id === form.payment)?.title}`,
+      selectedPlan ? `Рассрочка: ${selectedPlan.months} мес, ${selectedPlan.monthly.toLocaleString('ru-KZ')} ₸/мес, всего ${selectedPlan.total.toLocaleString('ru-KZ')} ₸` : null,
       form.comment.trim() ? `Комментарий: ${form.comment.trim()}` : null,
     ].filter(Boolean).join('\n')
 
@@ -287,8 +335,10 @@ export default function CheckoutPage() {
       const payments = await Promise.allSettled(
         created.items.map(order => apiCreateMarketplacePayment(order.id, {
           provider: form.payment === 'saved_card'
-            ? paymentMethods.find(method => method.id === form.payment_method_id)?.provider ?? 'saved_card'
-            : 'manual_invoice',
+            ? paymentMethods.find(method => String(method.id) === form.payment_method_id)?.provider ?? 'saved_card'
+            : form.payment === 'installment'
+              ? 'installment'
+              : 'manual_invoice',
           payment_method_id: form.payment === 'saved_card' ? Number(form.payment_method_id) : null,
         })),
       )
@@ -304,9 +354,9 @@ export default function CheckoutPage() {
       }))
       setCart({ items: [], total_items: 0, total_amount: 0 })
       window.dispatchEvent(new CustomEvent('marqet:cart-updated'))
-      show(form.payment === 'saved_card'
-        ? 'Заказы созданы, статус оплаты появится после подтверждения или ссылки провайдера'
-        : 'Заказы созданы и ожидают ручного подтверждения оплаты')
+      show(form.payment === 'invoice'
+        ? 'Заказы созданы и ожидают ручного подтверждения оплаты'
+        : 'Заказы созданы, статус оплаты появится после подтверждения провайдера')
     } catch (err: any) {
       setError(err.message || 'Не удалось оформить заказ')
     } finally {
@@ -415,11 +465,7 @@ export default function CheckoutPage() {
                       key={option.id}
                       type="button"
                       className={`choice ${form.payment === option.id ? 'choice-active' : ''}`}
-                      onClick={() => setForm(prev => ({
-                        ...prev,
-                        payment: option.id,
-                        payment_method_id: option.id === 'saved_card' ? (prev.payment_method_id || paymentMethods[0]?.id || '') : '',
-                      }))}
+                      onClick={() => selectPayment(option.id)}
                       disabled={option.id === 'saved_card' && !methodsLoading && paymentMethods.length === 0}
                     >
                       <div className="choice-title">{option.title}</div>
@@ -436,8 +482,8 @@ export default function CheckoutPage() {
                         <button
                           key={method.id}
                           type="button"
-                          className={`payment-method ${form.payment_method_id === method.id ? 'payment-method-active' : ''}`}
-                          onClick={() => setField('payment_method_id', method.id)}
+                          className={`payment-method ${form.payment_method_id === String(method.id) ? 'payment-method-active' : ''}`}
+                          onClick={() => setField('payment_method_id', String(method.id))}
                         >
                           <span>
                             <strong>{method.brand.toUpperCase()} · {method.last4}</strong>
@@ -454,6 +500,34 @@ export default function CheckoutPage() {
                       </div>
                     )}
                   </div>
+                )}
+                {form.payment === 'installment' && (
+                  plansLoading ? (
+                    <div className="checkout-note" style={{ marginTop: 14 }}>Загружаем варианты рассрочки...</div>
+                  ) : plans.length > 0 ? (
+                    <>
+                      <div className="plan-grid">
+                        {plans.map(plan => (
+                          <button key={plan.months} type="button" className={`plan ${months === plan.months ? 'plan-active' : ''}`} onClick={() => setMonths(plan.months)}>
+                            <div className="plan-months">{plan.months} мес</div>
+                            <div className="plan-monthly">{plan.monthly.toLocaleString('ru-KZ')} ₸/мес</div>
+                            <div className="plan-tag">{plan.interest_free ? 'без переплаты' : `+${plan.markup_percent}%`}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {selectedPlan && (
+                        <div className="plan-summary">
+                          {selectedPlan.months} платежей по <b>{selectedPlan.monthly.toLocaleString('ru-KZ')} ₸</b>
+                          {' · итого '}<b>{selectedPlan.total.toLocaleString('ru-KZ')} ₸</b>
+                          {selectedPlan.interest_free ? ' · без переплаты' : ` · переплата ${selectedPlan.markup_percent}%`}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="checkout-note" style={{ marginTop: 14 }}>
+                      Рассрочка доступна для заказов с известной суммой от 6 000 ₸. Для этого заказа используйте сохраненный способ оплаты или счет.
+                    </div>
+                  )
                 )}
                 <div className="field" style={{ marginTop: 14 }}>
                   <label htmlFor="buyer-comment">Комментарий к заказу</label>
@@ -484,10 +558,18 @@ export default function CheckoutPage() {
               <div className="summary-total"><span>Итого</span><span>{totalKnown ? fmt(cart.total_amount) : 'По запросу'}</span></div>
               {error && <div className="checkout-error" style={{ marginTop: 14 }}>{error}</div>}
               <div className="checkout-note" style={{ marginTop: 14 }}>
-                Мы не храним номер карты и CVV. Если провайдер вернет ссылку на подтверждение, она появится в заказе; счет подтверждается продавцом или менеджером.
+                {form.payment === 'installment' && selectedPlan
+                  ? `Рассрочка будет сохранена в заказе: ${selectedPlan.months} мес по ${selectedPlan.monthly.toLocaleString('ru-KZ')} ₸.`
+                  : 'Мы не храним номер карты и CVV. Если провайдер вернет ссылку на подтверждение, она появится в заказе; счет подтверждается продавцом или менеджером.'}
               </div>
               <button className="checkout-submit" type="submit" disabled={submitting}>
-                {submitting ? 'Создаем заказ...' : form.payment === 'invoice' ? 'Создать заказ и счет' : 'Создать заказ и платежную заявку'}
+                {submitting
+                  ? 'Создаем заказ...'
+                  : form.payment === 'invoice'
+                    ? 'Создать заказ и счет'
+                    : form.payment === 'installment'
+                      ? (selectedPlan ? `Оформить рассрочку · ${selectedPlan.monthly.toLocaleString('ru-KZ')} ₸/мес` : 'Оформить рассрочку')
+                      : `Создать заказ и платеж${totalKnown ? ' · ' + fmt(cart.total_amount) : ''}`}
               </button>
             </aside>
           </form>

@@ -134,6 +134,9 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(router, prefix="/sklad")
 
+    from app.api.payments import payment_router
+    app.include_router(payment_router)
+
     @app.middleware("http")
     async def request_context_middleware(request, call_next):
         rid = request.headers.get("X-Request-Id") or new_request_id()
